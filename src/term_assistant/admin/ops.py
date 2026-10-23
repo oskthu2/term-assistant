@@ -435,16 +435,24 @@ def released_codes(ws: Workspace, pid: str, sheet: str) -> set[str]:
 
 # -- livscykel: avveckling och ersättning ------------------------------------------------
 
-INACTIVE_LABEL, REPLACED_LABEL = "Inaktiv", "Ersätts av"
+INACTIVE_LABEL, REPLACED_LABEL, STATUS_LABEL, RETIRED_LABEL = "Inaktiv", "Ersätts av", "Status", "Avvecklad"
+# Standardegenskaper för livscykel (definierade i R5:s concept-properties; används även i R4,
+# precis som i HL7:s terminologipaket THO). Någon standardegenskap för "ersätts av" finns inte
+# i vare sig R4, R5 eller THO – den interoperabla formen är ConceptMap.
+STATUS_PROPERTY = PropertyDefinition(code="status", uri="http://hl7.org/fhir/concept-properties#status",
+                                     type="code", description="Status")
+STATUS_VALUES = ["active", "experimental", "deprecated", "retired"]
 RELATION_KEY, COMMENT_KEY = "_ersattningsrelation", "_ersattningskommentar"
 
 
 def lifecycle_columns(tpl: ImportTemplate, data: dict[str, SheetData]
                       ) -> tuple[ImportTemplate, ColumnMapping, ColumnMapping]:
-    """Säkerställ kolumnerna 'Inaktiv' (inactive) och 'Ersätts av' (replacedBy)."""
+    """Säkerställ kolumnerna 'Inaktiv' (inactive), 'Status' (status), 'Avvecklad' (retirementDate)
+    och 'Ersätts av' (replacedBy)."""
     new_tpl = tpl.model_copy(deep=True)
 
-    def ensure(prop: PropertyDefinition, label: str, widget: str) -> ColumnMapping:
+    def ensure(prop: PropertyDefinition, label: str, widget: str, options: list[str] | None = None
+               ) -> ColumnMapping:
         col = next((c for c in new_tpl.columns if c.role == ColumnRole.PROPERTY and c.property_code == prop.code),
                    None)
         if col is None:
@@ -452,7 +460,8 @@ def lifecycle_columns(tpl: ImportTemplate, data: dict[str, SheetData]
                 new_tpl.properties.append(prop)
             col = ColumnMapping(source_column=label, role=ColumnRole.PROPERTY, property_code=prop.code,
                                 rationale="Tillagd för avveckling av begrepp",
-                                ui=UiHints(label=label, order=len(new_tpl.columns), widget=widget))
+                                ui=UiHints(label=label, order=len(new_tpl.columns), widget=widget,
+                                           options=options))
             new_tpl.columns.append(col)
             for d in data.values():
                 if label not in d.headers:
@@ -460,6 +469,8 @@ def lifecycle_columns(tpl: ImportTemplate, data: dict[str, SheetData]
         return col
 
     inactive = ensure(PropertyRegistry.default().get("inactive").property, INACTIVE_LABEL, "checkbox")
+    ensure(STATUS_PROPERTY, STATUS_LABEL, "select", STATUS_VALUES)
+    ensure(PropertyRegistry.default().get("retirementDate").property, RETIRED_LABEL, "date")
     replaced = ensure(PropertyDefinition(code=REPLACED_BY, type="code",
                                          description="Ersätts av (kod i samma kodverk)"), REPLACED_LABEL,
                       "concept-picker")
@@ -482,7 +493,13 @@ def retire(tpl: ImportTemplate, data: dict[str, SheetData], sheet: str, row: dic
     new_tpl, inactive, replaced = lifecycle_columns(tpl, data)
     if replaced_by and is_true(target.get(inactive.source_column)):
         raise OpError(f"Ersättaren '{replaced_by}' är själv inaktiv – välj ett aktivt begrepp.")
+    from datetime import date
     row[inactive.source_column] = True
+    for col in new_tpl.columns:
+        if col.role == ColumnRole.PROPERTY and col.property_code == "status":
+            row[col.source_column] = "retired"
+        elif col.role == ColumnRole.PROPERTY and col.property_code == "retirementDate":
+            row[col.source_column] = row.get(col.source_column) or date.today().isoformat()
     row[replaced.source_column] = replaced_by
     row[RELATION_KEY] = relation if replaced_by else None
     row[COMMENT_KEY] = comment.strip() or None

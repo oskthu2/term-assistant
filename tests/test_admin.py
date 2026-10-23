@@ -166,6 +166,10 @@ def test_retire_with_replacement_gives_conceptmap(family_project, monkeypatch):
     telefon = next(c for c in cs["concept"] if c["code"] == "TELEFON")
     props = {p["code"]: p for p in telefon["property"]}
     assert props["inactive"]["valueBoolean"] is True and props["replacedBy"]["valueCode"] == "UNDERSOKNING"
+    assert props["status"]["valueCode"] == "retired" and "valueDateTime" in props["retirementDate"]
+    declared = {p["code"]: p.get("uri") for p in cs["property"]}
+    assert declared["status"] == "http://hl7.org/fhir/concept-properties#status"
+    assert declared["replacedBy"] is None  # ingen standard-URI finns, varken i R4, R5 eller THO
     cm = next(r for r in resources if r["resourceType"] == "ConceptMap")
     assert cm["url"] == f"{BASE}/ConceptMap/KV_EX_ERSATTNINGAR"
     target = cm["group"][0]["element"][0]["target"][0]
@@ -430,3 +434,15 @@ def test_releases_page_with_conceptmap_in_working_copy(tmp_path):
     client.post(f"/p/{pid}/s/KV_EX_0001/c/TELEFON/retire", data={"replaced_by": "UNDERSOKNING"})
     r = client.get(f"/p/{pid}/releases")
     assert r.status_code == 200 and "1 mappningar" in r.text
+
+
+def test_dev_user_switch(tmp_path, monkeypatch):
+    monkeypatch.setenv("TERM_DEV_USERS", "anna,bertil")
+    client = TestClient(create_app(tmp_path / "ws"), follow_redirects=True)
+    assert "testläge" in client.get("/").text
+    client.post("/dev/user", data={"user": "bertil"})
+    assert '<option selected>bertil</option>' in client.get("/").text
+    client.post("/dev/user", data={"user": "mallory"})  # inte i listan: ignoreras
+    assert '<option selected>bertil</option>' in client.get("/").text
+    monkeypatch.delenv("TERM_DEV_USERS")
+    assert "testläge" not in client.get("/").text and "okänd" in client.get("/").text

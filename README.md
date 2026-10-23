@@ -20,6 +20,31 @@ två ben:
 
 Designen beskrivs i [docs/arkitektur.md](docs/arkitektur.md).
 
+## Prova i GitHub Codespaces
+
+1. Lägg in din Claude-nyckel som Codespaces-hemlighet: **GitHub → Settings → Codespaces →
+   Secrets → New secret**, namn `ANTHROPIC_API_KEY`, och ge den åtkomst till repot. Codespaces
+   frågar också efter den när du skapar miljön, eftersom den står som rekommenderad hemlighet
+   i `.devcontainer/devcontainer.json`. Klistra aldrig in nyckeln i en fil eller i koden.
+2. **Code → Codespaces → Create codespace** på grenen. `.devcontainer/setup.sh` installerar
+   paketet, skapar exempelfiler och en arbetsyta med testinställningar, hämtar HL7-validatorn
+   och kör testerna.
+3. Starta vyn: `term-assistant admin --workspace arbetsyta --host 0.0.0.0 --port 8000`.
+   Codespaces öppnar port 8000. Låt den vara **privat**, eftersom vyn saknar egen inloggning.
+4. I testläge (`TERM_DEV_USERS=anna,bertil`) byter du användare uppe till höger. Det behövs
+   för att prova granskning och fyra ögon.
+
+Förslag på provtur:
+
+- **Ny inläsning** av `examples/kodverk_familj.xlsx`, `examples/lab_urval.xlsx` och
+  `examples/lista_utan_koder.pdf`, eller egna filer. Ladda bara upp filer som får hanteras
+  i en molnmiljö.
+- Öppna ett blad och tryck **AI-granskning**. Förslagen hamnar under **Förslag**, där du
+  granskar dem som den andra användaren.
+- Avveckla ett begrepp med ersättare. Skapa sedan en releasekandidat, godkänn den som
+  den andra användaren, validera paketet och publicera till inläsningskatalogen.
+- För ett urval: **Kontrollera urvalet** mot tx-nordics.
+
 ## Kom igång
 
 ```bash

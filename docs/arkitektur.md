@@ -274,10 +274,27 @@ väntade:
   `designation-use`-värdemängd. Bindningen är bara rekommenderad, och de egna
   koderna är ett medvetet val.
 * Språkkoder kan inte kontrolleras utan terminologiserver.
-* `replacedBy` saknar URI, eftersom FHIR R4 inte har någon standardegenskap
-  för ersättning. Den interoperabla uttrycksformen är ConceptMap.
+* `replacedBy` saknar URI, eftersom det inte finns någon standardegenskap för
+  ersättning (se nedan). Den interoperabla uttrycksformen är ConceptMap.
 
 ## Ersatta koder och urval som behöver hanteras
+
+**Löser R5 "ersätts av"?** Nej. Kontrollerat mot de officiella paketen:
+
+* R4 (`hl7.fhir.r4.core` 4.0.1) definierar `inactive`, `deprecated`,
+  `notSelectable`, `parent` och `child`.
+* R5 (`hl7.fhir.r5.core` 5.0.0) lägger till bland annat `status`,
+  `effectiveDate`, `deprecationDate`, `retirementDate`, `partOf`, `synonym`,
+  `comment` och `itemWeight`. Någon egenskap för ersättning finns inte.
+* HL7:s terminologipaket (THO, `hl7.terminology.r4` 7.4.0) har inte heller
+  någon. Där används R5:s `status` även i R4-kodverk.
+
+Verktyget sätter därför standardegenskaperna `status = retired` och
+`retirementDate` vid avveckling, med R5:s URI:er (fungerar även i R4, som i
+THO). Ersättaren uttrycks som den lokala egenskapen `replacedBy` (synlig i
+`$lookup`) och i en ConceptMap. ConceptMap är den form som mottagande system
+kan använda maskinellt, via `$translate`. Så hanteras ersättningar även i
+SNOMED CT (historiska associationer som ConceptMap).
 
 Ett avvecklat begrepp får `inactive = true` och kan peka på en ersättare i
 samma kodverk (`replacedBy`, relation och kommentar). Releasen får då en

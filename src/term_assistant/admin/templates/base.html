@@ -12,7 +12,14 @@
   <a href="/">Projekt</a>
   <a href="/import">Ny inläsning</a>
   <a href="/settings">Inställningar</a>
-  <span class="user">FHIR {{ fhir_version() }} · <span class="mono">{{ tx_url() }}</span> · {{ user }}</span>
+  <span class="user">FHIR {{ fhir_version() }} · <span class="mono">{{ tx_url() }}</span> ·
+    {% if dev_users() %}
+    <form method="post" action="/dev/user" class="inline" title="Testläge (TERM_DEV_USERS) – i drift sköts inloggning av en proxy">
+      <select name="user" onchange="this.form.submit()" style="width:auto;padding:2px 6px">
+        {% if user not in dev_users() %}<option selected>{{ user }}</option>{% endif %}
+        {% for u in dev_users() %}<option {{ 'selected' if u == user }}>{{ u }}</option>{% endfor %}
+      </select> <span class="badge warn">testläge</span></form>
+    {% else %}{{ user }}{% endif %}</span>
 </header>
 <main>
   {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}

@@ -39,8 +39,17 @@ from .store import Workspace
 HERE = Path(__file__).parent
 
 
+def dev_users() -> list[str]:
+    """Testläge utan inloggningsproxy: TERM_DEV_USERS="anna,bertil" ger ett användarbyte i sidhuvudet."""
+    return [u.strip() for u in os.environ.get("TERM_DEV_USERS", "").split(",") if u.strip()]
+
+
 def author(request: Request) -> str:
-    return request.headers.get("x-remote-user") or request.headers.get("x-forwarded-user") or "okänd"
+    user = request.headers.get("x-remote-user") or request.headers.get("x-forwarded-user")
+    if user:
+        return user
+    cookie = request.cookies.get("dev_user")
+    return cookie if cookie and cookie in dev_users() else "okänd"
 
 
 def create_app(workspace: str | Path, registry_path: str | Path | None = None,
@@ -54,7 +63,7 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
                        tx_url=lambda: ServerConfig.from_env().base_url, fhir_version=fhir_version,
                        publish_enabled=lambda: os.environ.get("TX_PUBLISH") == "1",
                        validator_enabled=lambda: bool(os.environ.get("FHIR_VALIDATOR_JAR")),
-                       code_count=lambda r: len(ops.resource_codes(r)))
+                       code_count=lambda r: len(ops.resource_codes(r)), dev_users=dev_users)
 
     def settings() -> Settings:
         return Settings.load(ws.root)
@@ -613,12 +622,22 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             return not_found(request, "Projektet")
         return render(request, "log.html", project=project, log=ws.read_log(project.id, 1000))
 
+    async def dev_user(request: Request):
+        form = await request.form()
+        user = form.get("user") or ""
+        back = request.headers.get("referer") or "/"
+        response = RedirectResponse(back, status_code=303)
+        if user in dev_users():
+            response.set_cookie("dev_user", user, httponly=True, samesite="lax")
+        return response
+
     async def health(request: Request):
         return JSONResponse({"status": "ok", "projects": len(ws.projects()), "fhirVersion": fhir_version()})
 
     routes = [
         Route("/", index),
         Route("/health", health),
+        Route("/dev/user", dev_user, methods=["POST"]),
         Route("/settings", settings_page),
         Route("/import", import_form, methods=["GET"]),
         Route("/import", import_upload, methods=["POST"]),
