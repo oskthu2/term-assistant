@@ -13,6 +13,10 @@ dependencies = [
     "mcp>=2.3",
     "openpyxl>=3.1",
     "pydantic>=2.7",
+    "starlette>=0.40",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +29,9 @@ term-assistant = "term_assistant.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"term_assistant.admin" = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

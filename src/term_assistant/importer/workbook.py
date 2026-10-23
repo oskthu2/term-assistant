@@ -82,8 +82,11 @@ def _read_xlsx(path: Path, max_rows: int | None) -> list[Sheet]:
 
 def _read_csv(path: Path, max_rows: int | None) -> Sheet:
     text = path.read_text(encoding="utf-8-sig")
-    dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
-    raw = [tuple(_clean(v) for v in r) for r in csv.reader(text.splitlines(), dialect)]
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        raw = [tuple(_clean(v) for v in r) for r in csv.reader(text.splitlines(), dialect)]
+    except csv.Error:  # t.ex. en enda kolumn utan avgränsare
+        raw = [tuple(_clean(v) for v in r) for r in csv.reader(text.splitlines(), delimiter=";")]
     sheet = parse_rows(path.stem, raw, max_rows) or Sheet(path.stem, 1, [])
     sheet.source_format = "csv"
     return sheet

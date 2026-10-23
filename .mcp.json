@@ -1,10 +1,11 @@
 {
   "mcpServers": {
     "term-assistant": {
-      "command": "term-assistant",
-      "args": ["mcp"],
+      "command": "python3",
+      "args": ["-m", "term_assistant.cli", "mcp"],
       "env": {
-        "TX_BASE_URL": "https://tx.fhir.org/r4",
+        "PYTHONPATH": "src",
+        "TX_BASE_URL": "https://tx-nordics.fhir.org/fhir",
         "TX_LANGUAGE": "sv",
         "TERM_REGISTRY": "registry.json"
       }

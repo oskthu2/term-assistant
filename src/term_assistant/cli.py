@@ -5,6 +5,7 @@
     term-assistant confirm mallar.json                     # registret lär sig mappningarna
     term-assistant build fil.xlsx --template mallar.json   # FHIR-resurser (Bundle)
     term-assistant diff gammal.json ny.json [--template]   # diff + kontroll mot releasepolicy
+    term-assistant admin [--workspace DIR]                 # administrationsvyn (webbapp)
     term-assistant mcp [--http]
 """
 
@@ -154,6 +155,11 @@ def cmd_diff(args: argparse.Namespace) -> None:
     sys.exit(1 if change.get("policy_errors") else 0)
 
 
+def cmd_admin(args: argparse.Namespace) -> None:
+    from .admin.app import run
+    run(args.workspace, host=args.host, port=args.port, base_url=args.base_url, registry_path=args.registry)
+
+
 def cmd_mcp(args: argparse.Namespace) -> None:
     from .mcp_server import run
     run("streamable-http" if args.http else "stdio")
@@ -194,6 +200,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("new")
     p.add_argument("--template", help="Kontrollera mot mallens releasepolicy")
     p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser("admin", help="Starta administrationsvyn (webbapp)")
+    p.add_argument("--workspace", default="arbetsyta", help="Katalog för projekt och releaser")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--base-url", default="http://example.org/fhir", help="Förvald bas-URL vid inläsning")
+    p.set_defaults(func=cmd_admin)
 
     p = sub.add_parser("mcp", help="Starta MCP-servern")
     p.add_argument("--http", action="store_true")

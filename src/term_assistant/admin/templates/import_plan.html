@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Bedömning{% endblock %}
+{% macro verdict_badge(v) -%}
+<span class="badge {{ {'godkänd': 'ok', 'godkänd med anmärkningar': 'warn', 'avvisad': 'bad'}.get(v.value, 'muted') }}">{{ v.value }}</span>
+{%- endmacro %}
+{% block content %}
+<div class="crumbs"><a href="/">Projekt</a> › <a href="/import">Ny inläsning</a> › {{ assessment.file }}</div>
+<h1>{{ assessment.file }} {{ verdict_badge(assessment.verdict) }}</h1>
+
+{% if assessment.tips %}
+<div class="panel"><h3>Tips</h3><ul>{% for t in assessment.tips %}<li>{{ t }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+<h2>Flikar</h2>
+<table>
+  <tr><th>Flik</th><th>Typ</th><th>Utfall</th><th>Rader</th><th>Kod / benämning</th><th>Bedömning</th></tr>
+  {% for s in assessment.sheets %}
+  <tr>
+    <td>{{ s.sheet }}{% if s.family %}<br><span class="badge muted">familj {{ s.family }}</span>{% endif %}</td>
+    <td>{{ s.kind.value }}</td>
+    <td>{{ verdict_badge(s.verdict) }}</td>
+    <td>{{ s.rows }}</td>
+    <td class="small">{{ s.code_column or '' }}{% if s.display_column %} / {{ s.display_column }}{% endif %}</td>
+    <td class="small">
+      {% for r in s.reasons %}<div>{{ r }}</div>{% endfor %}
+      {% for w in s.warnings %}<div class="diff-chg">⚠ {{ w }}</div>{% endfor %}
+      {% if s.tips %}<ul>{% for t in s.tips %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if assessment.relations %}
+<h2>Urval mellan flikar</h2>
+<div class="panel small">
+{% for r in assessment.relations %}
+  <div><b>{{ r.subset }}</b> är till {{ (r.overlap * 100) | round | int }} % ett urval av <b>{{ r.superset }}</b>
+  {% if r.missing %}<span class="muted">– saknas där: {{ r.missing[:10] | join(', ') }}</span>{% endif %}</div>
+  {% for h in r.hints %}<div class="diff-chg">→ {{ h }}</div>{% endfor %}
+{% endfor %}
+</div>
+{% endif %}
+
+{% if assessment.catalogue or assessment.history or not assessment.policy.allow_code_removal %}
+<h2>Ur dokumentationen</h2>
+<div class="grid">
+  {% if assessment.catalogue %}<div class="panel small"><h3>Katalog</h3>
+    {% for name, e in assessment.catalogue.items() %}<div><span class="mono">{{ name }}</span> – {{ e.title or '' }}
+    {% if e.identifier %}<span class="badge ok">{{ e.identifier }}</span>{% else %}<span class="badge warn">OID saknas</span>{% endif %}</div>{% endfor %}
+  </div>{% endif %}
+  {% if assessment.history %}<div class="panel small"><h3>Revisionshistorik</h3>
+    {% for h in assessment.history %}<div>{{ h.values() | list | join(' · ') }}</div>{% endfor %}</div>{% endif %}
+  {% if not assessment.policy.allow_code_removal %}<div class="panel small"><h3>Regel</h3>
+    Koder får inte tas bort: <i>"{{ assessment.policy.rationale }}"</i></div>{% endif %}
+</div>
+{% endif %}
+
+<h2>Förslag</h2>
+{% if not plan.proposals %}
+<div class="panel">Inget i filen kan läsas in. Åtgärda enligt tipsen ovan och läs in filen igen.</div>
+{% endif %}
+{% for p in plan.proposals %}
+{% set t = p.template %}
+<div class="panel">
+  <h3>{{ t.codesystem.title or t.codesystem.name }}
+    <span class="badge muted">{{ 'ValueSet' if t.kind == 'valueset' else 'CodeSystem' }}</span>
+    {% if t.source.sheets | length > 1 %}<span class="badge">{{ t.source.sheets | length }} flikar</span>{% endif %}</h3>
+  <table>
+    <tr><th>Kolumn</th><th>Tolkning</th><th>Mål</th><th>Säkerhet</th><th>Motivering</th></tr>
+    {% for c in p.choices %}
+    <tr>
+      <td>{{ c.source_column }}</td>
+      <td>{{ ROLE_LABELS[c.role] }}</td>
+      <td class="mono small">{{ c.registry_key or c.new_property_code or c.context_group or c.pattern or c.language or '' }}
+        {% if c.new_property_code %}<span class="badge warn">ny</span>{% endif %}</td>
+      <td><span class="badge {{ 'ok' if c.confidence >= 0.85 else ('warn' if c.confidence >= 0.6 else 'bad') }}">{{ (c.confidence * 100) | round | int }} %</span></td>
+      <td class="small muted">{{ c.rationale }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% for g in t.generated_codesystems %}
+  <p class="small">Genererat kodverk <span class="mono">{{ g.name }}</span>: {{ g.concepts | map(attribute='display') | join(', ') }}</p>
+  {% endfor %}
+  {% if p.questions %}<h3>Öppna frågor</h3><ul class="small">{% for q in p.questions %}<li>{{ q }}</li>{% endfor %}</ul>{% endif %}
+  <form method="post" action="/import/{{ uid }}/create/{{ loop.index0 }}" class="actions">
+    <input type="text" name="title" value="{{ t.codesystem.title or t.codesystem.name }}" style="max-width:360px" aria-label="Projektnamn">
+    <button type="submit">Skapa projekt</button>
+    <span class="small muted">Kolumnernas tolkning kan ändras i projektet efteråt.</span>
+  </form>
+</div>
+{% endfor %}
+{% endblock %}

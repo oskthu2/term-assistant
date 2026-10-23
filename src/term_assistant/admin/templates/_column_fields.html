@@ -1,0 +1,70 @@
+{# Fält för en kolumns roll och mål. Förväntar: c (ColumnMapping eller none), prefix (unikt id) #}
+{% set role = c.role.value if c else 'property' %}
+<div class="formgrid">
+  <div><label>Rubrik i vyn</label><input type="text" name="label" value="{{ (c.ui.label if c and c.ui else (c.source_column if c else '')) }}" {{ 'required' if not c }}></div>
+  <div><label>Står för</label>
+    <select name="role" data-role-select="{{ prefix }}">
+      {% for r in roles %}<option value="{{ r.value }}" {{ 'selected' if r.value == role }}>{{ ROLE_LABELS[r] }}</option>{% endfor %}
+    </select></div>
+  <div><label>Ordning</label><input type="number" name="order" value="{{ c.ui.order if c and c.ui else '' }}"></div>
+  <div><label>Fälttyp</label>
+    <select name="widget">
+      <option value="auto">automatisk</option>
+      {% for w in ['text', 'textarea', 'select', 'checkbox', 'date', 'number', 'concept-picker'] %}
+      <option value="{{ w }}" {{ 'selected' if c and c.ui and c.ui.widget == w }}>{{ w }}</option>{% endfor %}
+    </select></div>
+</div>
+<label class="check"><input type="checkbox" name="visible" {{ 'checked' if not c or not c.ui or c.ui.visible }}> Visas</label>
+<label class="check"><input type="checkbox" name="editable" {{ 'checked' if not c or not c.ui or c.ui.editable }}> Redigerbar</label>
+<label>Val i lista (kommaseparerat, för fälttypen select)</label>
+<input type="text" name="options" value="{{ (c.ui.options or []) | join(', ') if c and c.ui else '' }}">
+
+<fieldset data-for="{{ prefix }}" data-role="property">
+  <legend>Egenskap (CodeSystem.property)</legend>
+  <label>Befintlig egenskap – återanvänd helst en som redan finns</label>
+  <select name="property">
+    {% for p in properties %}<option value="{{ p.code }}" {{ 'selected' if c and c.property_code == p.code }}>{{ p.code }} ({{ p.type }}){% if p.description and p.description != p.code %} – {{ p.description }}{% endif %}</option>{% endfor %}
+    <option value="__new__">+ ny egenskap …</option>
+  </select>
+  <div class="formgrid">
+    <div><label>Ny egenskaps kod</label><input type="text" name="new_property_code" placeholder="t.ex. sorteringsordning"></div>
+    <div><label>Typ</label><select name="new_property_type">{% for t in types %}<option>{{ t }}</option>{% endfor %}</select></div>
+    <div><label>Beskrivning</label><input type="text" name="new_property_description"></div>
+  </div>
+</fieldset>
+
+<fieldset data-for="{{ prefix }}" data-role="designation">
+  <legend>Designation</legend>
+  <div class="formgrid">
+    <div><label>Språk</label><input type="text" name="language" value="{{ c.designation.language if c and c.designation and c.designation.language else tpl.codesystem.language }}"></div>
+    <div><label>Användning (designation.use)</label>
+      <select name="use">
+        {% for value, label in uses %}
+        {% set selected = c and c.designation and ((value.startswith('gen:') and value.endswith(':' ~ (c.designation.use_code or '#'))) or (value.startswith('reg:') and c.designation.use_code and label.endswith('(' ~ c.designation.use_code ~ ')'))) %}
+        <option value="{{ value }}" {{ 'selected' if selected }}>{{ label }}</option>{% endfor %}
+      </select></div>
+  </div>
+</fieldset>
+
+<fieldset data-for="{{ prefix }}" data-role="context">
+  <legend>Användningskontext</legend>
+  <div class="formgrid">
+    <div><label>Kontextgrupp</label>
+      <select name="context_group">
+        {% for g in contexts %}<option value="{{ g.key }}" {{ 'selected' if c and c.context and c.context.codesystem == g.key }}>{{ g.title }}</option>{% endfor %}
+        <option value="__new__" {{ 'selected' if not contexts }}>+ ny grupp …</option>
+      </select></div>
+    <div><label>Namn på ny grupp</label><input type="text" name="new_group" placeholder="t.ex. Används av"></div>
+    <div><label>Uttrycks som</label>
+      <select name="context_mode">
+        <option value="designation" {{ 'selected' if not (c and c.context and c.context.mode == 'property') }}>designation (use = kontext)</option>
+        <option value="property" {{ 'selected' if c and c.context and c.context.mode == 'property' }}>egenskap (Coding)</option>
+      </select></div>
+  </div>
+</fieldset>
+
+<fieldset data-for="{{ prefix }}" data-role="derived">
+  <legend>Härledning</legend>
+  <label>Mönster ({codesystem} och {code} ersätts)</label>
+  <input type="text" name="pattern" value="{{ c.pattern if c and c.pattern else '{codesystem}.{code}' }}">
+</fieldset>

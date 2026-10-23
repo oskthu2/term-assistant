@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Kodverksadministration{% endblock %} – term-assistant</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Kodverksadministration</a>
+  <a href="/">Projekt</a>
+  <a href="/import">Ny inläsning</a>
+  <span class="user">Terminologitjänst: <span class="mono">{{ tx_url() }}</span> · {{ user }}</span>
+</header>
+<main>
+  {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+  {% if errors %}<div class="errors"><ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

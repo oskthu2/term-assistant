@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ rel.version }} – {{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'releases' %}{% include "_project_tabs.html" %}
+<h2>{{ 'Release' if rel.status == 'release' else 'Releasekandidat' }} <span class="mono">{{ rel.version }}</span>
+  {% if rel.published %}<span class="badge">publicerad {{ rel.published[:16].replace('T', ' ') }}</span>{% endif %}</h2>
+<p class="small muted">Skapad {{ rel.created[:16].replace('T', ' ') }} av {{ rel.author }}{% if rel.based_on %} · bygger på {{ rel.based_on }}{% endif %}</p>
+{% if rel.notes %}<div class="panel">{{ rel.notes }}</div>{% endif %}
+<div class="actions">
+  <a class="button secondary" href="/p/{{ project.id }}/releases/{{ rel.version }}/bundle.json">Ladda ner (FHIR Bundle)</a>
+  {% if rel.status == 'rc' %}
+  <form method="post" action="/p/{{ project.id }}/releases/{{ rel.version }}/approve" class="inline"
+        onsubmit="return confirm('Godkänn {{ rel.version }} som release?')"><button type="submit">Godkänn som release</button></form>
+  {% elif publish_enabled() %}
+  <form method="post" action="/p/{{ project.id }}/releases/{{ rel.version }}/publish" class="inline"
+        onsubmit="return confirm('Publicera till {{ tx_url() }}?')"><button type="submit">Publicera till terminologitjänsten</button></form>
+  {% else %}<span class="small muted">Publicering till terminologitjänsten slås på med TX_PUBLISH=1.</span>{% endif %}
+</div>
+<h3>Ändringar per resurs</h3>
+<table>
+  <tr><th>Resurs</th><th>Tillagda</th><th>Borttagna</th><th>Ändrade</th></tr>
+  {% for d in rel.diffs %}
+  <tr>
+    <td>{{ d.resourceType }} <span class="mono">{{ d.name }}</span>{% if d.new %} <span class="badge">ny</span>{% endif %}</td>
+    <td class="small diff-add">{{ d.added | length }}{% if d.added and not d.new %}: {{ d.added[:15] | join(', ') }}{% endif %}</td>
+    <td class="small diff-del">{{ d.removed | length }}{% if d.removed %}: {{ d.removed[:15] | join(', ') }}{% endif %}</td>
+    <td class="small diff-chg">{{ d.changed | length }}{% if d.changed %}: {% for ch in d.changed[:15] %}{{ ch.code }} ({{ ch.fields | join('/') }}){% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% if rel.warnings %}<h3>Varningar</h3><ul class="small">{% for w in rel.warnings %}<li class="diff-chg">{{ w }}</li>{% endfor %}</ul>{% endif %}
+{% if rel.publish_log %}<h3>Publiceringslogg</h3><pre>{{ rel.publish_log | join('\n') }}</pre>{% endif %}
+{% endblock %}

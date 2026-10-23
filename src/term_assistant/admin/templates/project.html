@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'overview' %}{% include "_project_tabs.html" %}
+{% set open_q = project.questions | rejectattr('resolved') | list %}
+<div class="grid">
+  <div class="panel">
+    <h3>{{ 'Urval' if tpl.kind == 'valueset' else 'Kodverk' }}</h3>
+    <ul class="plain">
+      {% for name, d in data.items() %}
+      <li><a href="/p/{{ project.id }}/s/{{ quote(name) }}">{{ name }}</a> <span class="muted small">{{ d.rows | length }} rader</span></li>
+      {% endfor %}
+      {% for g in tpl.generated_codesystems %}
+      <li class="small"><span class="mono">{{ g.name }}</span> <span class="badge muted">genererat</span> {{ g.concepts | length }} koder</li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="panel">
+    <h3>Status</h3>
+    <div>Arbetsversion: <span class="mono">{{ tpl.codesystem.version }}</span></div>
+    {% set rel = releases | selectattr('status', 'equalto', 'release') | first %}
+    {% set rc = releases | selectattr('status', 'equalto', 'rc') | first %}
+    <div>Senaste release: {% if rel %}<a class="mono" href="/p/{{ project.id }}/releases/{{ rel.version }}">{{ rel.version }}</a>{% else %}<span class="muted">ingen</span>{% endif %}</div>
+    <div>Senaste kandidat: {% if rc %}<a class="mono" href="/p/{{ project.id }}/releases/{{ rc.version }}">{{ rc.version }}</a>{% else %}<span class="muted">ingen</span>{% endif %}</div>
+    <div>Öppna frågor: <a href="#fragor">{{ open_q | length }}</a></div>
+    <div class="actions">
+      <a class="button secondary" href="/p/{{ project.id }}/preview.json">Arbetskopia (FHIR)</a>
+      <a class="button secondary" href="/p/{{ project.id }}/template.json">Mall (JSON)</a>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>Regler</h3>
+    <div>{% if tpl.policy.allow_code_removal %}Koder får tas bort{% else %}<b>Koder får inte tas bort</b> – avveckla i stället{% endif %}</div>
+    <div>{% if tpl.policy.allow_display_change %}Benämningar får ändras{% else %}<b>Benämningar får inte ändras</b>{% endif %}</div>
+    {% if tpl.policy.rationale %}<div class="small muted">"{{ tpl.policy.rationale }}"</div>{% endif %}
+  </div>
+</div>
+
+<h2 id="fragor">Öppna frågor</h2>
+<div class="panel">
+{% if not project.questions %}<span class="muted">Inga frågor.</span>{% endif %}
+<ul class="plain">
+{% for q in project.questions %}
+  <li>
+    <form method="post" action="/p/{{ project.id }}/questions/{{ loop.index0 }}" class="inline">
+      <button type="submit" class="secondary" title="Markera som {{ 'öppen' if q.resolved else 'besvarad' }}">{{ '↺' if q.resolved else '✓' }}</button>
+      <span class="{{ 'q-resolved' if q.resolved }}">{{ q.text }}</span>
+      {% if not q.resolved %}<input type="text" name="note" placeholder="Anteckning (valfri)" style="max-width:280px">{% elif q.note %}<span class="small muted"> – {{ q.note }}</span>{% endif %}
+    </form>
+  </li>
+{% endfor %}
+</ul>
+</div>
+
+<h2>Metadata</h2>
+<form method="post" action="/p/{{ project.id }}/meta" class="panel">
+  <div class="formgrid">
+    <div><label>Projektnamn</label><input type="text" name="title" value="{{ project.title }}"></div>
+    <div><label>{{ 'Bas-URL för kodverken' if tpl.source.sheets | length > 1 else 'Canonical URL' }}</label><input type="url" name="cs_url" value="{{ tpl.codesystem.url }}"></div>
+    <div><label>Titel</label><input type="text" name="cs_title" value="{{ tpl.codesystem.title or '' }}"></div>
+    <div><label>Utgivare</label><input type="text" name="cs_publisher" value="{{ tpl.codesystem.publisher or '' }}"></div>
+    <div><label>Språk</label><input type="text" name="cs_language" value="{{ tpl.codesystem.language }}"></div>
+  </div>
+  <label>Beskrivning</label><textarea name="cs_description">{{ tpl.codesystem.description or '' }}</textarea>
+  <label>Syfte</label><textarea name="cs_purpose">{{ tpl.codesystem.purpose or '' }}</textarea>
+  {% if tpl.source.sheets | length > 1 %}
+  <h3>Kodverk i familjen</h3>
+  <table>
+    <tr><th>Flik</th><th>Titel</th><th>Canonical URL</th><th>OID / identifierare</th><th>Utgivare</th></tr>
+    {% for s in tpl.source.sheets %}{% set i = loop.index0 %}
+    <tr><td class="mono small">{{ s.name }}</td>
+      <td><input type="text" name="s{{ i }}_title" value="{{ s.title or '' }}"></td>
+      <td><input type="url" name="s{{ i }}_url" value="{{ s.url or '' }}"></td>
+      <td><input type="text" name="s{{ i }}_identifier" value="{{ s.identifier or '' }}" placeholder="urn:oid:…"></td>
+      <td><input type="text" name="s{{ i }}_publisher" value="{{ s.publisher or '' }}"></td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if tpl.external_systems %}
+  <h3>Externa kodsystem</h3>
+  {% for key, url in tpl.external_systems.items() %}
+  <label>{{ key }}</label><input type="text" name="ext_{{ key }}" value="{{ url }}">
+  {% endfor %}
+  <p class="small muted">Ange canonical URL så som kodsystemet heter på terminologitjänsten.</p>
+  {% endif %}
+  <h3>Releaseregler</h3>
+  <label class="check"><input type="checkbox" name="allow_code_removal" {{ 'checked' if tpl.policy.allow_code_removal }}> Koder får tas bort</label>
+  <label class="check"><input type="checkbox" name="allow_display_change" {{ 'checked' if tpl.policy.allow_display_change }}> Benämningar får ändras</label>
+  <div class="actions"><button type="submit">Spara</button></div>
+</form>
+
+<h2>Senaste händelser</h2>
+<div class="panel small">
+{% for e in log %}<div><span class="muted">{{ e.time[:16].replace('T', ' ') }} · {{ e.author }}</span> – {{ e.action }}</div>{% endfor %}
+<div class="actions"><a href="/p/{{ project.id }}/log">Hela loggen</a></div>
+</div>
+{% endblock %}

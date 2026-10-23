@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Kolumner – {{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'columns' %}{% include "_project_tabs.html" %}
+<p>Mallen avgör vad varje kolumn står för i FHIR och hur den visas. Ändringar slår igenom direkt i vyn
+och i nästa releasekandidat; raderna behöver inte migreras.</p>
+{% for c in tpl.columns %}{% set i = loop.index0 %}
+<details class="col" {{ 'open' if open_index == i }}>
+  <summary>
+    <b>{{ c.ui.label if c.ui else c.source_column }}</b>
+    <span class="badge {{ 'muted' if c.role == ColumnRole.IGNORE }}">{{ ROLE_LABELS[c.role] }}</span>
+    <span class="mono small">{{ c.property_code or (c.context.code if c.context else '') or c.pattern or (c.designation.use_display or c.designation.language if c.designation else '') or '' }}</span>
+    {% if c.ui and not c.ui.visible %}<span class="badge muted">dold</span>{% endif %}
+    {% if c.ui and c.ui.label != c.source_column %}<span class="small muted">källa: {{ c.source_column }}</span>{% endif %}
+  </summary>
+  <div>
+    {% if c.rationale %}<p class="small muted">{{ c.rationale }}</p>{% endif %}
+    <form method="post" action="/p/{{ project.id }}/columns/{{ i }}">
+      {% set prefix = 'col' ~ i %}{% include "_column_fields.html" %}
+      <div class="actions"><button type="submit">Spara kolumnen</button></div>
+    </form>
+  </div>
+</details>
+{% endfor %}
+
+<details class="col" {{ 'open' if open_index == -1 }}>
+  <summary><b>+ Lägg till kolumn</b></summary>
+  <div>
+    <form method="post" action="/p/{{ project.id }}/columns/new">
+      {% set c = none %}{% set prefix = 'new' %}{% include "_column_fields.html" %}
+      <div class="actions"><button type="submit">Lägg till</button></div>
+    </form>
+  </div>
+</details>
+
+{% if tpl.generated_codesystems %}
+<h2>Genererade kodverk</h2>
+{% for g in tpl.generated_codesystems %}
+<div class="panel small"><b>{{ g.title }}</b> <span class="mono">{{ g.url }}</span>
+  <div>{% for k in g.concepts %}<span class="badge muted">{{ k.code }}</span> {{ k.display }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+{% endfor %}
+{% endif %}
+<script>
+document.querySelectorAll('[data-role-select]').forEach(sel => {
+  const prefix = sel.dataset.roleSelect;
+  const update = () => document.querySelectorAll(`fieldset[data-for="${prefix}"]`)
+    .forEach(fs => fs.hidden = fs.dataset.role !== sel.value);
+  sel.addEventListener('change', update); update();
+});
+</script>
+{% endblock %}

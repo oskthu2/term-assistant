@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Nytt begrepp' if is_new else row.get(tpl.columns[0].source_column) }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Projekt</a> › <a href="/p/{{ project.id }}">{{ project.title }}</a> › <a href="/p/{{ project.id }}/s/{{ quote(sheet) }}">{{ sheet }}</a></div>
+{% set code_col = (tpl.columns | selectattr('role', 'equalto', ColumnRole.CODE) | first).source_column %}
+<h1>{{ 'Nytt begrepp' if is_new else row.get(code_col) }}
+  {% if released %}<span class="badge">finns i senaste release</span>{% endif %}</h1>
+<form method="post" class="panel">
+  {% set ns = namespace(group=none) %}
+  {% for i, c in columns %}
+    {% set w = widget(tpl, c) %}
+    {% set v = cell(tpl, c, row, sheet) if row else none %}
+    {% set grp = c.ui.group if c.ui else none %}
+    {% if grp != ns.group %}{% if ns.group %}</fieldset>{% endif %}{% if grp %}<fieldset><legend>{{ grp }}</legend>{% endif %}{% set ns.group = grp %}{% endif %}
+    {% set label = c.ui.label if c.ui else c.source_column %}
+    {% set locked = (c.ui and not c.ui.editable and not (is_new and c.role == ColumnRole.CODE)) or c.role == ColumnRole.DERIVED %}
+    {% if w == 'checkbox' %}
+      <label class="check"><input type="checkbox" name="c{{ i }}" {{ 'checked' if v is sameas true }} {{ 'disabled' if locked }}> {{ label }}</label>
+    {% else %}
+      <label for="c{{ i }}">{{ label }} <span class="small">{% if label != ROLE_LABELS[c.role] %}· {{ ROLE_LABELS[c.role] }}{% endif %}{% if c.property_code %} ({{ c.property_code }}){% endif %}{% if c.designation and c.designation.use_display %} ({{ c.designation.use_display }}){% elif c.designation and c.designation.language %} ({{ c.designation.language }}){% endif %}</span></label>
+      {% if w == 'textarea' %}
+        <textarea id="c{{ i }}" name="c{{ i }}" {{ 'readonly' if locked }}>{{ v or '' }}</textarea>
+      {% elif w == 'select' and c.ui.options %}
+        <select id="c{{ i }}" name="c{{ i }}" {{ 'disabled' if locked }}><option value=""></option>
+          {% for o in c.ui.options %}<option {{ 'selected' if (v|string) == o }}>{{ o }}</option>{% endfor %}
+          {% if v and (v|string) not in c.ui.options %}<option selected>{{ v }}</option>{% endif %}</select>
+      {% elif w == 'concept-picker' %}
+        <input type="text" id="c{{ i }}" name="c{{ i }}" value="{{ v or '' }}" list="codes" {{ 'readonly' if locked }}>
+      {% else %}
+        <input type="{{ 'date' if w == 'date' else ('number' if w == 'number' else 'text') }}" {{ 'step=any' if w == 'number' }} id="c{{ i }}" name="c{{ i }}" value="{{ v if v is not none else '' }}" {{ 'readonly' if locked }}>
+      {% endif %}
+    {% endif %}
+    {% if c.note %}<div class="small muted">{{ c.note }}</div>{% endif %}
+  {% endfor %}
+  {% if ns.group %}</fieldset>{% endif %}
+  <datalist id="codes">{% for p in parents %}<option value="{{ p }}">{% endfor %}</datalist>
+  <div class="actions">
+    <button type="submit">{{ 'Lägg till' if is_new else 'Spara' }}</button>
+    <a href="/p/{{ project.id }}/s/{{ quote(sheet) }}">Avbryt</a>
+  </div>
+</form>
+{% if not is_new %}
+<div class="panel">
+  <h3>Avveckla eller ta bort</h3>
+  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/retire" class="inline">
+    <button type="submit" class="secondary">Markera som inaktiv</button>
+  </form>
+  {% if deletable %}
+  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/delete" class="inline"
+        onsubmit="return confirm('Ta bort begreppet helt?')">
+    <button type="submit" class="danger">Ta bort</button>
+  </form>
+  {% else %}<p class="small muted">{{ delete_reason }}</p>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Releaser – {{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'releases' %}{% include "_project_tabs.html" %}
+<div class="grid">
+<form method="post" action="/p/{{ project.id }}/releases" class="panel">
+  <h3>Ny releasekandidat</h3>
+  <p class="small muted">Arbetskopian byggs till FHIR, jämförs med senaste release och kontrolleras mot
+  kodverkets regler. Kandidaten får versionen <span class="mono">X.Y.Z-rc.N</span> och status draft.</p>
+  <label>Version</label><input type="text" name="version" value="{{ suggested }}" pattern="\d+\.\d+\.\d+" required>
+  <label>Releaseanteckning</label><textarea name="notes" placeholder="Vad är nytt?"></textarea>
+  <div class="actions"><button type="submit">Skapa releasekandidat</button>
+  <a class="button secondary" href="/p/{{ project.id }}/preview.json">Förhandsgranska FHIR</a></div>
+</form>
+<div class="panel">
+  <h3>Arbetskopian</h3>
+  <ul class="plain small">{% for r in preview %}<li>{{ r.resourceType }} <span class="mono">{{ r.name }}</span> –
+    {{ r.count if r.count is defined else (r.compose.include | sum(attribute='concept', start=[]) | length) }} koder</li>{% endfor %}</ul>
+  {% if warnings %}<h3>Varningar</h3><ul class="small">{% for w in warnings[:30] %}<li class="diff-chg">{{ w }}</li>{% endfor %}</ul>{% endif %}
+  {% if project.template.kind == 'valueset' %}
+  <form method="post" action="/p/{{ project.id }}/validate" class="actions">
+    <button type="submit" class="secondary">Validera koderna mot terminologitjänsten</button></form>
+  {% endif %}
+</div>
+</div>
+<h2>Historik</h2>
+{% if not releases %}<div class="panel muted">Inga releaser ännu.</div>{% else %}
+<table>
+  <tr><th>Version</th><th>Status</th><th>Skapad</th><th>Av</th><th>Ändringar</th><th>Anteckning</th></tr>
+  {% for r in releases %}
+  <tr>
+    <td class="mono"><a href="/p/{{ project.id }}/releases/{{ r.version }}">{{ r.version }}</a></td>
+    <td>{% if r.status == 'release' %}<span class="badge ok">release</span>{% if r.published %} <span class="badge">publicerad</span>{% endif %}{% else %}<span class="badge warn">kandidat</span>{% endif %}</td>
+    <td class="small">{{ r.created[:16].replace('T', ' ') }}</td><td class="small">{{ r.author }}</td>
+    <td class="small"><span class="diff-add">+{{ r.diffs | sum(attribute='added', start=[]) | length }}</span>
+      <span class="diff-del">−{{ r.diffs | sum(attribute='removed', start=[]) | length }}</span>
+      <span class="diff-chg">~{{ r.diffs | sum(attribute='changed', start=[]) | length }}</span></td>
+    <td class="small">{{ r.notes }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

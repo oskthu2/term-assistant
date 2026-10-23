@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ sheet }} – {{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'sheet:' ~ sheet %}{% include "_project_tabs.html" %}
+{% set inactive_col = (tpl.columns | selectattr('property_code', 'equalto', 'inactive') | first) %}
+{% set src = (tpl.source.sheets | selectattr('sheet', 'equalto', sheet) | first) %}
+{% if src and src.title %}<p class="muted">{{ src.title }}{% if src.url %} · <span class="mono small">{{ src.url }}</span>{% endif %}</p>{% endif %}
+<div class="toolbar">
+  <input type="search" id="filter" placeholder="Filtrera …" aria-label="Filtrera rader">
+  <span class="small muted"><span id="count">{{ data.rows | length }}</span> av {{ data.rows | length }} rader</span>
+  <a class="button" href="/p/{{ project.id }}/s/{{ quote(sheet) }}/new">Nytt begrepp</a>
+</div>
+<div class="tablewrap">
+<table id="concepts">
+  <thead>
+  {% set ns = namespace(has_group=false) %}
+  {% for i, c in columns %}{% if c.ui and c.ui.group %}{% set ns.has_group = true %}{% endif %}{% endfor %}
+  {% if ns.has_group %}
+  <tr>
+    {% set g = namespace(cur=none, n=0) %}
+    {% for i, c in columns %}
+      {% set grp = c.ui.group if c.ui else none %}
+      {% if grp and grp == g.cur %}{% set g.n = g.n + 1 %}{% else %}
+        {% if g.n %}<th colspan="{{ g.n }}" class="{{ 'group' if g.cur }}">{{ g.cur or '' }}</th>{% endif %}
+        {% set g.cur = grp %}{% set g.n = 1 %}
+      {% endif %}
+    {% endfor %}
+    {% if g.n %}<th colspan="{{ g.n }}" class="{{ 'group' if g.cur }}">{{ g.cur or '' }}</th>{% endif %}
+  </tr>
+  {% endif %}
+  <tr>{% for i, c in columns %}<th title="{{ ROLE_LABELS[c.role] }}{% if c.property_code %}: {{ c.property_code }}{% endif %}{% if c.note %} – {{ c.note }}{% endif %}">{{ c.ui.label if c.ui else c.source_column }}{% if c.note %}*{% endif %}</th>{% endfor %}</tr>
+  </thead>
+  <tbody>
+  {% for row in data.rows %}
+    {% set code = row.get(code_col) %}
+    <tr class="{{ 'inactive' if inactive_col and cell(tpl, inactive_col, row, sheet) is sameas true }}">
+    {% for i, c in columns %}
+      {% set v = cell(tpl, c, row, sheet) %}
+      {% if c.role == ColumnRole.CODE %}
+        <td class="mono"><a href="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(code|string) }}">{{ code }}</a>{% if released and code|string not in released %} <span class="badge warn" title="Inte släppt ännu">ny</span>{% endif %}</td>
+      {% elif v is sameas true %}<td class="center">✓</td>
+      {% elif v is sameas false %}<td class="center muted"></td>
+      {% elif c.role == ColumnRole.DERIVED %}<td class="mono small muted">{{ v or '' }}</td>
+      {% else %}<td>{{ v if v is not none else '' }}</td>{% endif %}
+    {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% set notes = columns | map(attribute=1) | selectattr('note') | list %}
+{% for c in notes %}<p class="small muted">* {{ c.ui.label if c.ui else c.source_column }}: {{ c.note }}</p>{% endfor %}
+<script>
+const input = document.getElementById('filter'), rows = document.querySelectorAll('#concepts tbody tr');
+input.addEventListener('input', () => {
+  const q = input.value.toLowerCase(); let n = 0;
+  rows.forEach(r => { const hit = r.textContent.toLowerCase().includes(q); r.hidden = !hit; if (hit) n++; });
+  document.getElementById('count').textContent = n;
+});
+</script>
+{% endblock %}

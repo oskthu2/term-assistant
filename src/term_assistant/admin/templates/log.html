@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Logg – {{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'log' %}{% include "_project_tabs.html" %}
+<table>
+  <tr><th>Tid</th><th>Vem</th><th>Vad</th><th>Detaljer</th></tr>
+  {% for e in log %}
+  <tr><td class="small mono">{{ e.time[:19].replace('T', ' ') }}</td><td class="small">{{ e.author }}</td><td>{{ e.action }}</td>
+    <td class="small muted">{% if e.detail %}{% for k, v in e.detail.items() %}<div><b>{{ k }}</b>: {{ v }}</div>{% endfor %}{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

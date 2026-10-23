@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Ny inläsning{% endblock %}
+{% block content %}
+<h1>Läs in ett kalkylark</h1>
+<div class="panel">
+<p>Filen läses in en gång. Varje flik bedöms (kodverk, urval ur ett befintligt kodsystem, dokumentation …),
+och du får förslag på hur kolumnerna ska tolkas. Förslaget blir mallen för projektets administrationsvy.
+Därefter underhålls kodverket här i stället för i kalkylarket.</p>
+<form method="post" action="/import" enctype="multipart/form-data">
+  <label for="file">Fil (Excel, CSV eller PDF)</label>
+  <input type="file" id="file" name="file" accept=".xlsx,.xlsm,.csv,.tsv,.txt,.pdf" required>
+  <div class="formgrid">
+    <div><label for="base_url">Bas-URL för canonical URL:er</label>
+      <input type="url" id="base_url" name="base_url" value="{{ base_url }}"></div>
+    <div><label for="language">Språk</label><input type="text" id="language" name="language" value="sv"></div>
+  </div>
+  <div class="actions"><button type="submit">Bedöm filen</button></div>
+</form>
+</div>
+<div class="panel small">
+<h3>Minimikrav</h3>
+<ul>
+  <li>En rad per begrepp och en unik, stabil kod per rad i en egen kolumn.</li>
+  <li>En benämning (klartext) per kod och en rubrikrad.</li>
+  <li>Ett kodverk per flik, med kodverkets namn i fliknamnet eller på en rad som "Kodverk: KV_X".</li>
+</ul>
+</div>
+{% endblock %}

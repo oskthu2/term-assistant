@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Projekt</h1>
+<div class="actions"><a class="button" href="/import">Läs in ett kalkylark</a></div>
+{% if not projects %}
+<div class="panel">Inga projekt ännu. Börja med att läsa in ett kodverk i Excel, CSV eller PDF.
+Det bedöms först, sedan får du ett förslag på mall som blir projektets administrationsvy.</div>
+{% else %}
+<table>
+  <tr><th>Projekt</th><th>Typ</th><th>Kodverk / urval</th><th>Version</th><th>Källa</th><th>Ändrat</th></tr>
+  {% for p in projects %}
+  <tr>
+    <td><a href="/p/{{ p.id }}">{{ p.title }}</a></td>
+    <td>{{ 'Urval (ValueSet)' if p.template.kind == 'valueset' else 'Kodverk (CodeSystem)' }}</td>
+    <td>{{ p.template.source.sheets | length if p.template.source.sheets else 1 }}</td>
+    <td class="mono">{{ p.template.codesystem.version }}</td>
+    <td class="small muted">{{ p.source_file or '' }}</td>
+    <td class="small muted">{{ p.updated[:16].replace('T', ' ') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

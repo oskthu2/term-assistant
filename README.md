@@ -27,17 +27,42 @@ pip install -e '.[dev,ai]'
 pytest
 ```
 
+### Administrationsvyn (webbapp)
+
+```bash
+term-assistant admin --workspace ./arbetsyta --base-url https://terminologi.example.se/fhir
+# öppna http://127.0.0.1:8000
+```
+
+1. **Ny inläsning**: ladda upp Excel, CSV eller PDF. Du ser bedömningen per flik (avvisad med tips,
+   urval, familj, referenslista …) och ett mallförslag per kodverk eller urval.
+2. **Skapa projekt**: raderna kopieras in, en gång. Textkataloger viks in som vanliga kolumner,
+   och härledda kolumner (t.ex. `KV_X.KOD.RBK`) räknas fram i stället för att lagras.
+3. **Underhåll**: tabellvyn och formuläret byggs från mallen, med kryss för användningskontext,
+   rullistor, datum och överordnad kod. Varje ändring loggas med användarnamn.
+4. **Kolumner**: byt vad en kolumn står för (egenskap, designation, kontext …) eller lägg till
+   nya. Befintliga egenskaper från registret föreslås först. Raderna behöver inte migreras.
+5. **Releaser**: en releasekandidat (`X.Y.Z-rc.N`) byggs till FHIR och jämförs med senaste
+   release. Den kontrolleras också mot reglerna: borttag av släppta koder spärras om policyn
+   kräver det, och då avvecklar man i stället. Godkänn sedan som release, ladda ner som
+   Bundle eller publicera till terminologitjänsten (`TX_PUBLISH=1`).
+6. **Urval**: kör `$validate-code` för alla koder mot `TX_BASE_URL` direkt från vyn.
+
+Vyn har ingen egen inloggning. Kör den bakom en proxy som skickar `X-Remote-User`.
+Projekten lagras som JSON i arbetsytan och går att versionshantera med git.
+
 ### MCP-servern
 
 ```bash
-export TX_BASE_URL=https://tx.fhir.org/r4      # eller er egen tjänst
+export TX_BASE_URL=https://tx-nordics.fhir.org/fhir   # eller tx.fhir.org/r4, Ineras tjänst …
 export TX_TOKEN=...                            # valfritt, bearer-token
 term-assistant mcp                             # stdio
 term-assistant mcp --http                      # streamable HTTP
 ```
 
-`.mcp.json` i repot registrerar servern i Claude Code. Byt `TX_BASE_URL` för att
-peka mot Inera eller tx.nordics.
+`.mcp.json` i repot registrerar servern i Claude Code (pekar mot tx-nordics).
+Verifierat mot tx-nordics (Ontoserver): SNOMED CT med nordiska moduler och NPU
+(`http://npu-terminology.org`) finns där. Svenska SWE-tillägg och LOINC saknas.
 
 | Verktyg | FHIR-operation |
 |---|---|
@@ -128,4 +153,9 @@ src/term_assistant/
     subset.py            urval -> ValueSet, validering av koder mot tjänsten
     build.py             alla resurser för en mall (familj, genererade kodverk, textkatalog)
     release.py           releasekandidat, release, diff, releasepolicy
+  admin/
+    app.py               webbappen (Starlette + Jinja2, serverrenderad)
+    ops.py               projekt, celler, kolumnändringar, avveckling, releaser
+    store.py             arbetsyta på disk (JSON) och ändringslogg
+    templates/, static/  sidor och stil
 ```

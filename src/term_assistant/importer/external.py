@@ -65,9 +65,10 @@ class ExternalSystem:
 
 
 SYSTEMS: list[ExternalSystem] = [
+    # Bekräftad på tx-nordics.fhir.org (Ontoserver), version "INT 2026-09-30". SWE-koderna finns inte där.
     ExternalSystem("npu", "NPU (Nomenclature for Properties and Units)", "http://npu-terminology.org",
                    re.compile(r"^NPU\d{5}$"), re.compile(r"^NPU\s*\d+$", re.I), expected="NPU + 5 siffror",
-                   search_terms=("NPU",), verified=False),
+                   search_terms=("NPU",)),
     ExternalSystem("swe-npu", "Svenska NPU-tillägg (SWE-koder)", None,
                    re.compile(r"^SWE\d{5}$"), re.compile(r"^SWE\s*\d+$", re.I), expected="SWE + 5 siffror",
                    search_terms=("NPU", "SWE"), verified=False),
@@ -159,8 +160,10 @@ async def resolve_system_uris(client, keys: list[str]) -> dict[str, list[dict]]:
         hits: dict[str, dict] = {}
         for term in system.search_terms or (system.name,):
             for cs in await client.search("CodeSystem", count=20, **{"title:contains": term}):
-                text = " ".join(str(cs.get(k, "")) for k in ("title", "name", "url")).lower()
-                if term.lower() in text and cs.get("url"):
+                text = " ".join(str(cs.get(k, "")) for k in ("title", "name", "url"))
+                # Hela ord: "NPU" ska inte träffa "INPUT".
+                if re.search(rf"(?<![A-Za-z]){re.escape(term)}(?![a-z])", text, re.I) and cs.get("url") \
+                        and not cs["url"].endswith("/property"):
                     hits[cs["url"]] = {k: cs.get(k) for k in ("url", "title", "version")}
         found[key] = list(hits.values())
     return found

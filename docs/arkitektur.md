@@ -216,12 +216,36 @@ arbetskopia (draft, 1.1.0) → releasekandidat (draft, 1.1.0-rc.1, rc.2 …) →
 per egenskapsdefinition. Diffen är underlaget för releasenoter och granskning
 före publicering. Publicering sker med `TerminologyClient.put_resource`.
 
+## Administrationsvyn (`admin/`)
+
+Vyn är en serverrenderad webbapp (Starlette + Jinja2, ingen byggkedja och
+inget CDN). Den har tre bärande beslut:
+
+* **Arbetskopian är rader, inte FHIR.** Projektets data sparas som rader per
+  flik, precis som i kalkylarket. Mallen översätter raderna till FHIR först när
+  en releasekandidat byggs, med samma kod som vid inläsningen
+  (`build_all`). Därför är det en ren malländring att byta vad en kolumn står
+  för, eller att lägga till en kolumn. Ingen data behöver migreras.
+* **Inläsningen städar bort kalkylarkets egenheter.** Textkataloger i separata
+  flikar blir vanliga designation-kolumner på begreppen. Härledda kolumner
+  lagras inte utan räknas fram och visas låsta.
+* **Regler följer med.** Om policyn förbjuder borttag erbjuder vyn bara
+  avveckling för koder som finns i en release (egenskapen `inactive`; kolumnen
+  läggs till vid behov). En releasekandidat som ändå saknar en släppt kod
+  spärras.
+
+Releaseflödet är: arbetskopia → `X.Y.Z-rc.N` (draft, diff mot senaste
+release, policykontroll) → godkänd release `X.Y.Z` (active) → valfri
+publicering med `PUT` till terminologitjänsten. Publiceringen kräver
+`TX_PUBLISH=1`. Allt loggas med användarnamnet från `X-Remote-User`.
+
 ## Nästa steg
 
-* **Administrationsvy** som renderas från mallen, t.ex. en webbapp ovanpå samma
-  Python-kärna (FastAPI) eller en separat frontend som läser mall + CodeSystem.
-* **Lagring** av mallar, arbetskopior och releasekandidater, t.ex. i git eller
-  en databas. Releaser publiceras till terminologitjänsten.
+* **Hämta befintligt kodverk** från terminologitjänsten som nytt projekt
+  (mall genererad från `CodeSystem.property`), för kodverk som aldrig legat i Excel.
+* **Export till Excel** av arbetskopian för den som behöver granska i kalkylark.
+* **Samtidig redigering**: arbetsytan är gjord för en eller ett fåtal
+  redaktörer; vid fler behövs låsning eller en databas.
 * **Autentisering** mot Inera (OAuth2/SITHS) och skrivbehörighet för
   publicering.
 * **ConceptMap-stöd vid inläsning**: kolumner som innehåller koder från andra
