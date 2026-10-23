@@ -1,0 +1,366 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_0001",
+      "resource": {
+        "resourceType": "CodeSystem",
+        "id": "KV-EX-0001",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_0001",
+        "identifier": [
+          {
+            "system": "urn:ietf:rfc:3986",
+            "value": "urn:oid:1.2.752.999.1.1"
+          }
+        ],
+        "version": "1.1.0",
+        "name": "KV_EX_0001",
+        "title": "Typ av underlag",
+        "status": "draft",
+        "date": "2026-10-23",
+        "publisher": "Exempelmyndigheten",
+        "language": "sv",
+        "caseSensitive": true,
+        "content": "complete",
+        "count": 4,
+        "concept": [
+          {
+            "code": "UNDERSOKNING",
+            "display": "Min undersökning",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_A",
+                  "display": "Intyg A"
+                },
+                "value": "Min undersökning"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_B",
+                  "display": "Intyg B"
+                },
+                "value": "Min undersökning"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "UTLATANDE_C",
+                  "display": "Utlåtande C"
+                },
+                "value": "Min undersökning"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
+                  "code": "RBK",
+                  "display": "Rubriktexter"
+                },
+                "value": "Min undersökning av patienten"
+              }
+            ]
+          },
+          {
+            "code": "TELEFON",
+            "display": "Telefonkontakt",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_A",
+                  "display": "Intyg A"
+                },
+                "value": "Telefonkontakt"
+              }
+            ]
+          },
+          {
+            "code": "JOURNAL",
+            "display": "Journaluppgifter",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_A",
+                  "display": "Intyg A"
+                },
+                "value": "Journaluppgifter"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_B",
+                  "display": "Intyg B"
+                },
+                "value": "Journaluppgifter"
+              }
+            ]
+          },
+          {
+            "code": "ANNAT",
+            "display": "Annat",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_A",
+                  "display": "Intyg A"
+                },
+                "value": "Annat"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_B",
+                  "display": "Intyg B"
+                },
+                "value": "Annat"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "UTLATANDE_C",
+                  "display": "Utlåtande C"
+                },
+                "value": "Annat"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
+                  "code": "RBK",
+                  "display": "Rubriktexter"
+                },
+                "value": "Annat"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
+                  "code": "HLP",
+                  "display": "Hjälptexter"
+                },
+                "value": "Ange vilket underlag som avses."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_0002",
+      "resource": {
+        "resourceType": "CodeSystem",
+        "id": "KV-EX-0002",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_0002",
+        "version": "1.1.0",
+        "name": "KV_EX_0002",
+        "title": "Typ av sysselsättning",
+        "status": "draft",
+        "date": "2026-10-23",
+        "publisher": "Exempelmyndigheten",
+        "language": "sv",
+        "caseSensitive": true,
+        "content": "complete",
+        "count": 3,
+        "concept": [
+          {
+            "code": "ARBETE",
+            "display": "Nuvarande arbete",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_A",
+                  "display": "Intyg A"
+                },
+                "value": "Nuvarande arbete"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "UTLATANDE_C",
+                  "display": "Utlåtande C"
+                },
+                "value": "Nuvarande arbete"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
+                  "code": "RBK",
+                  "display": "Rubriktexter"
+                },
+                "value": "Nuvarande arbete"
+              }
+            ]
+          },
+          {
+            "code": "STUDIER",
+            "display": "Studier",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_A",
+                  "display": "Intyg A"
+                },
+                "value": "Studier"
+              }
+            ]
+          },
+          {
+            "code": "ARBETSSOKANDE",
+            "display": "Arbetssökande",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_A",
+                  "display": "Intyg A"
+                },
+                "value": "Arbetssökande"
+              },
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "UTLATANDE_C",
+                  "display": "Utlåtande C"
+                },
+                "value": "Arbetssökande"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_0003",
+      "resource": {
+        "resourceType": "CodeSystem",
+        "id": "KV-EX-0003",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_0003",
+        "version": "1.1.0",
+        "name": "KV_EX_0003",
+        "title": "Grad",
+        "status": "draft",
+        "date": "2026-10-23",
+        "publisher": "Exempelmyndigheten",
+        "language": "sv",
+        "caseSensitive": true,
+        "content": "complete",
+        "count": 2,
+        "concept": [
+          {
+            "code": "HELT",
+            "display": "100 procent",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_B",
+                  "display": "Intyg B"
+                },
+                "value": "100 procent"
+              }
+            ]
+          },
+          {
+            "code": "HALFTEN",
+            "display": "50 procent",
+            "designation": [
+              {
+                "language": "sv",
+                "use": {
+                  "system": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+                  "code": "INTYG_B",
+                  "display": "Intyg B"
+                },
+                "value": "50 procent"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+      "resource": {
+        "resourceType": "CodeSystem",
+        "id": "KV-EX-ANVANDS-AV",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+        "version": "1.1.0",
+        "name": "KV_EX_ANVANDS_AV",
+        "title": "Används av (KV_EX)",
+        "status": "draft",
+        "date": "2026-10-23",
+        "description": "Användningskontexter som genererats från kolumnrubriker i källan.",
+        "language": "sv",
+        "caseSensitive": true,
+        "content": "complete",
+        "count": 3,
+        "concept": [
+          {
+            "code": "INTYG_A",
+            "display": "Intyg A"
+          },
+          {
+            "code": "INTYG_B",
+            "display": "Intyg B"
+          },
+          {
+            "code": "UTLATANDE_C",
+            "display": "Utlåtande C"
+          }
+        ]
+      }
+    },
+    {
+      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
+      "resource": {
+        "resourceType": "CodeSystem",
+        "id": "KV-EX-TEXTROLL",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
+        "version": "1.1.0",
+        "name": "KV_EX_TEXTROLL",
+        "title": "Textroller (KV_EX)",
+        "status": "draft",
+        "date": "2026-10-23",
+        "description": "Designation-typer (textroller) som genererats från kolumnrubriker i källan.",
+        "language": "sv",
+        "caseSensitive": true,
+        "content": "complete",
+        "count": 2,
+        "concept": [
+          {
+            "code": "RBK",
+            "display": "Rubriktexter"
+          },
+          {
+            "code": "HLP",
+            "display": "Hjälptexter"
+          }
+        ]
+      }
+    }
+  ]
+}

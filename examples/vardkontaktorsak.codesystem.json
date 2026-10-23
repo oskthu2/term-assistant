@@ -1,9 +1,10 @@
 {
   "resourceType": "CodeSystem",
-  "url": "http://example.org/fhir/CodeSystem/vardkontaktorsak",
+  "id": "Kodverk",
+  "url": "http://example.org/fhir/CodeSystem/Kodverk",
   "version": "0.1.0",
-  "name": "Vardkontaktorsak",
-  "title": "Vårdkontaktens orsak",
+  "name": "Kodverk",
+  "title": "Kodverk",
   "status": "draft",
   "date": "2026-10-23",
   "language": "sv",

@@ -15,7 +15,7 @@ import json
 
 from pydantic import BaseModel
 
-from .mapping import CodeSystemMeta, SourceInfo
+from .mapping import CodeSystemMeta
 from .registry import PropertyRegistry
 from .suggest import ColumnChoice, MappingProposal, build_template
 from .workbook import Sheet
@@ -35,6 +35,13 @@ ett heuristiskt förslag. Bestäm för varje kolumn vilken roll den har:
   ett annat språk.
 - property: övriga egenskaper. Ange registry_key för en befintlig egenskap.
 - parent: överordnad kod (hierarki)
+- context: kryssmarkering (x) som anger att koden används i ett visst sammanhang,
+  typiskt kolumner under en grupprubrik som "Används av". Ange context_group.
+  Kolumnetiketterna blir koder i ett eget kodverk som används som designation.use.
+- derived: värdet kan räknas fram ur koden (t.ex. "KV_X.KOD.RBK"); ange pattern
+  med {codesystem} och {code}.
+- group: i ett urval ur ett befintligt kodsystem (NPU, SNOMED CT …), kolumnen som
+  delar in koderna i grupper – blir ett ValueSet per grupp.
 - ignore: tomma kolumner, löpnummer, interna anteckningar utan värde för kodverket
 
 Målet är att konvergera mot ett litet antal egenskaper som återanvänds mellan
@@ -67,6 +74,10 @@ def refine_with_claude(
     payload = {
         "sheet": sheet.name,
         "preamble": sheet.preamble,
+        "metadata": sheet.metadata,
+        "column_groups": sheet.column_groups,
+        "footnotes": sheet.footnotes,
+        "external_codes": proposal.external.model_dump() if proposal.external else None,
         "headers": sheet.headers,
         "sample_rows": sheet.sample(sample_rows),
         "total_rows": sheet.total_rows,
@@ -106,10 +117,14 @@ def refine_with_claude(
             c.new_property_code = c.new_property_code or c.registry_key
             c.registry_key = None
 
-    template, new_props = build_template(
-        choices, proposal.profiles, registry, meta,
-        SourceInfo(file=source_file, sheet=sheet.name, header_row=sheet.header_row),
-    )
+    old = proposal.template
+    template, new_props = build_template(choices, proposal.profiles, registry, meta, old.source, sheet,
+                                         proposal.external)
+    # Behåll det som kommer från resten av arbetsboken (katalog, historik, policy, textkatalog).
+    template.history, template.policy, template.text_catalogue = old.history, old.policy, old.text_catalogue
+    template.codesystem.version = old.codesystem.version
+    keys = {g.key for g in template.generated_codesystems}
+    template.generated_codesystems += [g for g in old.generated_codesystems if g.key not in keys]
     return proposal.model_copy(update={
         "template": template, "choices": choices, "questions": ai.questions, "new_properties": new_props,
     })

@@ -13,6 +13,7 @@ from .workbook import Sheet
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 _CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{0,30}$")
 _BOOL = {"ja", "nej", "j", "n", "yes", "no", "true", "false", "sant", "falskt", "x", "1", "0"}
+MARKERS = {"x", "✓", "✔", "•", "*", "+"}
 
 
 class ColumnProfile(BaseModel):
@@ -21,7 +22,7 @@ class ColumnProfile(BaseModel):
     fill_ratio: float
     unique_ratio: float
     distinct: int
-    inferred_type: str           # integer | decimal | boolean | date | code | text
+    inferred_type: str           # integer | decimal | boolean | date | code | marker | text
     avg_length: float
     samples: list[str]
     top_values: list[str]        # vanligaste värden (för låg kardinalitet -> select)
@@ -67,6 +68,8 @@ def _infer_type(values: list[Any]) -> str:
         return "text"
     def share(pred) -> float:
         return sum(1 for v in values if pred(v)) / len(values)
+    if share(lambda v: str(v).strip().lower() in MARKERS) > 0.95:
+        return "marker"  # kryss i en ruta; tom cell betyder "nej"
     if share(lambda v: isinstance(v, bool) or str(v).strip().lower() in _BOOL) > 0.95 \
             and len({str(v).lower() for v in values}) <= 2:
         return "boolean"

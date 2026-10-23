@@ -83,3 +83,16 @@ def _norm(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _norm(v) for k, v in sorted(value.items())}
     return value
+
+
+def check_policy(change: dict[str, Any], policy) -> list[str]:
+    """Kontrollera en diff mot mallens releasepolicy. Returnerar spärrande fel."""
+    errors = []
+    if change["removed"] and not policy.allow_code_removal:
+        errors.append(f"Koder får inte tas bort enligt kodverkets regler ({policy.rationale or 'policy'}), "
+                      f"men {', '.join(change['removed'][:10])} saknas i den nya versionen.")
+    if not policy.allow_display_change:
+        changed = [c["code"] for c in change["changed"] if "display" in c["fields"]]
+        if changed:
+            errors.append(f"Visningsnamn får inte ändras, men har ändrats för {', '.join(changed[:10])}.")
+    return errors

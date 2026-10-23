@@ -17,10 +17,14 @@ from mcp.server.mcpserver import MCPServer
 
 from .config import ServerConfig
 from .fhir.client import TerminologyClient
-from .importer.mapping import CodeSystemMeta, ImportTemplate
+from .importer.assess import assess_workbook as _assess_workbook
+from .importer.build import build_all
+from .importer.external import resolve_system_uris
+from .importer.mapping import ImportTemplate
+from .importer.plan import plan_import
 from .importer.registry import PropertyRegistry
-from .importer.suggest import propose_mapping
-from .importer.transform import build_codesystem
+from .importer.release import check_policy, diff
+from .importer.subset import validate_valueset_codes
 from .importer.workbook import read_workbook
 
 INSTRUCTIONS = """\
@@ -32,9 +36,11 @@ URL:er, använd sedan lookup_code, validate_code, expand_valueset,
 concept_hierarchy, subsumes och translate_code. Hitta aldrig på koder – slå upp
 eller validera dem.
 
-Inläsning: inspect_workbook -> propose_column_mapping -> diskutera förslaget och
-öppna frågor med användaren -> confirm_mapping (lär registret) ->
-build_codesystem. Föredra alltid befintliga registerposter framför nya
+Inläsning: assess_workbook (kvalitetsgrind: avvisar filer som inte uppfyller
+minimikraven, hittar urval ur befintliga kodsystem, familjer av flikar, katalog
+och regler) -> propose_import -> diskutera öppna frågor med användaren ->
+confirm_mapping (lär registret) -> build_resources -> för urval:
+validate_valueset. Föredra alltid befintliga registerposter framför nya
 egenskaper; använd registry_near_duplicates för att hitta synonyma egenskaper."""
 
 mcp = MCPServer("term-assistant", instructions=INSTRUCTIONS)
@@ -145,26 +151,60 @@ async def translate_code(code: str, system: str, conceptmap: str | None = None,
 
 @mcp.tool()
 def inspect_workbook(path: str, rows: int = 10) -> list[dict]:
-    """Visa bladen i en Excel/CSV-fil: rubrikrad, rubriker, antal rader och några exempelrader."""
+    """Visa bladen i en Excel-/CSV-/PDF-fil: rubriker, metadata, grupprubriker, fotnoter och exempelrader."""
     return [{"sheet": s.name, "header_row": s.header_row, "headers": s.headers, "total_rows": s.total_rows,
+             "metadata": s.metadata, "column_groups": s.column_groups, "footnotes": s.footnotes,
              "preamble": s.preamble, "sample": s.sample(rows)} for s in read_workbook(path)]
 
 
 @mcp.tool()
-def propose_column_mapping(path: str, url: str, name: str, sheet: str | None = None,
-                           title: str | None = None, language: str = "sv") -> dict:
-    """Föreslå hur bladets kolumner ska mappas mot FHIR (kod, display, designation, egenskap, förälder).
+def assess_workbook(path: str) -> dict:
+    """Kvalitetsgrind: bedöm varje blad (kodverk, urval, referenslista, textkatalog, dokumentation,
+    hjälplista, oanvändbart), med utfall, skäl, varningar och tips om minimikrav. Visar också familjer
+    av likadana blad, urvalsrelationer mellan blad (med troliga skrivfel), katalog/OID, historik och regler."""
+    wa, _ = _assess_workbook(path)
+    return wa.model_dump(mode="json", exclude_none=True)
 
-    Returnerar en mall (template), kolumnprofiler, öppna frågor, föreslagna nya
-    egenskaper och förslag på registerposter som bör slås ihop.
-    """
-    sheets = read_workbook(path, sheet=sheet)
-    if not sheets:
-        raise ValueError("Hittade inga blad med data")
-    registry = PropertyRegistry.load(registry_path())
-    meta = CodeSystemMeta(url=url, name=name, title=title, language=language)
-    proposal = propose_mapping(sheets[0], registry, meta, source_file=path)
-    return proposal.model_dump(mode="json", exclude={"profiles": {"__all__": {"samples"}}}, exclude_none=True)
+
+@mcp.tool()
+def propose_import(path: str, base_url: str, sheet: str | None = None, language: str = "sv") -> dict:
+    """Föreslå mallar för alla kodverk och urval i filen (en mall per familj av likadana blad).
+
+    Returnerar bedömningen och per mall: mallen, kolumnbeslut, öppna frågor och föreslagna nya egenskaper."""
+    plan, _ = plan_import(path, base_url, PropertyRegistry.load(registry_path()), sheet=sheet, language=language)
+    return {
+        "assessment": plan.assessment.model_dump(mode="json", exclude_none=True),
+        "proposals": [p.model_dump(mode="json", exclude_none=True,
+                                   exclude={"profiles": {"__all__": {"samples"}}}) for p in plan.proposals],
+    }
+
+
+@mcp.tool()
+def build_resources(path: str, template: dict) -> dict:
+    """Bygg FHIR-resurser (CodeSystem eller ValueSet, status draft) från fil + mall."""
+    resources, warnings = build_all(ImportTemplate.model_validate(template), read_workbook(path))
+    return {"resources": resources, "warnings": warnings[:100], "warning_count": len(warnings)}
+
+
+@mcp.tool()
+async def validate_valueset(valueset: dict) -> dict:
+    """Validera varje kod i ett ValueSet (t.ex. ett urval ur NPU) mot terminologitjänsten."""
+    return await validate_valueset_codes(client(), valueset)
+
+
+@mcp.tool()
+async def resolve_external_systems(keys: list[str]) -> dict:
+    """Leta upp canonical URL för externa kodsystem (t.ex. 'npu', 'swe-npu', 'kva') på terminologitjänsten."""
+    return await resolve_system_uris(client(), keys)
+
+
+@mcp.tool()
+def compare_versions(old: dict, new: dict, template: dict | None = None) -> dict:
+    """Diff mellan två versioner av ett CodeSystem, kontrollerad mot mallens releasepolicy."""
+    change = diff(old, new)
+    if template:
+        change["policy_errors"] = check_policy(change, ImportTemplate.model_validate(template).policy)
+    return change
 
 
 @mcp.tool()
@@ -189,15 +229,6 @@ def confirm_mapping(template: dict, add_new_properties: bool = True) -> dict:
                 learned.append(f"{col.source_column} -> {key}")
     registry.save(registry_path())
     return {"learned": learned, "added_properties": added, "problems": tpl.validate_template()}
-
-
-@mcp.tool()
-def build_codesystem_from_workbook(path: str, template: dict) -> dict:
-    """Bygg ett FHIR CodeSystem (status draft) från fil + mall. Returnerar resurs och varningar."""
-    tpl = ImportTemplate.model_validate(template)
-    sheets = read_workbook(path, sheet=tpl.source.sheet)
-    codesystem, warnings = build_codesystem(tpl, sheets[0].rows)
-    return {"codesystem": codesystem, "warnings": warnings[:100], "warning_count": len(warnings)}
 
 
 @mcp.tool()

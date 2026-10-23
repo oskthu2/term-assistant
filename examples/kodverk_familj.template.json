@@ -1,0 +1,237 @@
+{
+  "template_version": 2,
+  "kind": "codesystem",
+  "codesystem": {
+    "url": "http://example.org/fhir/CodeSystem",
+    "name": "KV_EX",
+    "title": "KV_EX",
+    "version": "1.1.0",
+    "publisher": "Exempelmyndigheten, enhet för kodverk",
+    "language": "sv",
+    "case_sensitive": true
+  },
+  "source": {
+    "file": "examples/kodverk_familj.xlsx",
+    "sheet": "KV_EX_0001",
+    "header_row": 5,
+    "sheets": [
+      {
+        "sheet": "KV_EX_0001",
+        "name": "KV_EX_0001",
+        "title": "Typ av underlag",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_0001",
+        "identifier": "urn:oid:1.2.752.999.1.1",
+        "publisher": "Exempelmyndigheten"
+      },
+      {
+        "sheet": "KV_EX_0002",
+        "name": "KV_EX_0002",
+        "title": "Typ av sysselsättning",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_0002",
+        "publisher": "Exempelmyndigheten"
+      },
+      {
+        "sheet": "KV_EX_0003",
+        "name": "KV_EX_0003",
+        "title": "Grad",
+        "url": "http://example.org/fhir/CodeSystem/KV_EX_0003",
+        "publisher": "Exempelmyndigheten"
+      }
+    ]
+  },
+  "columns": [
+    {
+      "source_column": "Kod",
+      "role": "code",
+      "confidence": 0.95,
+      "rationale": "Unik till 100% och code-lik",
+      "ui": {
+        "label": "Kod",
+        "order": 0,
+        "visible": true,
+        "editable": false,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "Klartext",
+      "role": "display",
+      "confidence": 0.9,
+      "rationale": "Rubriken liknar en benämning",
+      "note": "Den exakta texten anges i textleveransen för respektive intyg.",
+      "ui": {
+        "label": "Klartext",
+        "order": 1,
+        "visible": true,
+        "editable": true,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "ID rubriktext",
+      "role": "derived",
+      "pattern": "{codesystem}.{code}.RBK",
+      "confidence": 0.95,
+      "rationale": "Härleds ur koden: {codesystem}.{code}.RBK",
+      "ui": {
+        "label": "ID rubriktext",
+        "order": 2,
+        "visible": true,
+        "editable": false,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "ID hjälptext",
+      "role": "derived",
+      "pattern": "{codesystem}.{code}.HLP",
+      "confidence": 0.95,
+      "rationale": "Härleds ur koden: {codesystem}.{code}.HLP",
+      "ui": {
+        "label": "ID hjälptext",
+        "order": 3,
+        "visible": true,
+        "editable": false,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "Intyg A",
+      "role": "context",
+      "context": {
+        "codesystem": "anvandsAv",
+        "code": "INTYG_A",
+        "mode": "designation"
+      },
+      "confidence": 0.85,
+      "rationale": "Kryssmarkering under grupprubriken 'Används av'",
+      "ui": {
+        "label": "Intyg A",
+        "order": 4,
+        "visible": true,
+        "editable": true,
+        "widget": "checkbox",
+        "group": "Används av"
+      }
+    },
+    {
+      "source_column": "Intyg B",
+      "role": "context",
+      "context": {
+        "codesystem": "anvandsAv",
+        "code": "INTYG_B",
+        "mode": "designation"
+      },
+      "confidence": 0.85,
+      "rationale": "Kryssmarkering under grupprubriken 'Används av'",
+      "ui": {
+        "label": "Intyg B",
+        "order": 5,
+        "visible": true,
+        "editable": true,
+        "widget": "checkbox",
+        "group": "Används av"
+      }
+    },
+    {
+      "source_column": "Utlåtande C",
+      "role": "context",
+      "context": {
+        "codesystem": "anvandsAv",
+        "code": "UTLATANDE_C",
+        "mode": "designation"
+      },
+      "confidence": 0.85,
+      "rationale": "Kryssmarkering under grupprubriken 'Används av'",
+      "ui": {
+        "label": "Utlåtande C",
+        "order": 6,
+        "visible": true,
+        "editable": true,
+        "widget": "checkbox",
+        "group": "Används av"
+      }
+    }
+  ],
+  "properties": [],
+  "generated_codesystems": [
+    {
+      "key": "anvandsAv",
+      "url": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
+      "name": "KV_EX_ANVANDS_AV",
+      "title": "Används av (KV_EX)",
+      "purpose": "usage-context",
+      "property_code": "anvandsAv",
+      "concepts": [
+        {
+          "code": "INTYG_A",
+          "display": "Intyg A",
+          "source_column": "Intyg A"
+        },
+        {
+          "code": "INTYG_B",
+          "display": "Intyg B",
+          "source_column": "Intyg B"
+        },
+        {
+          "code": "UTLATANDE_C",
+          "display": "Utlåtande C",
+          "source_column": "Utlåtande C"
+        }
+      ]
+    },
+    {
+      "key": "textroll",
+      "url": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
+      "name": "KV_EX_TEXTROLL",
+      "title": "Textroller (KV_EX)",
+      "purpose": "designation-use",
+      "concepts": [
+        {
+          "code": "RBK",
+          "display": "Rubriktexter",
+          "source_column": "Rubriktexter"
+        },
+        {
+          "code": "HLP",
+          "display": "Hjälptexter",
+          "source_column": "Hjälptexter"
+        }
+      ]
+    }
+  ],
+  "external_systems": {},
+  "text_catalogue": {
+    "sheet": "Standardtexter",
+    "key_column": "Kodverk Urval",
+    "key_pattern": "{codesystem}.{code}",
+    "use_codesystem": "textroll",
+    "texts": [
+      {
+        "column": "Rubriktexter",
+        "use_code": "RBK"
+      },
+      {
+        "column": "Hjälptexter",
+        "use_code": "HLP"
+      }
+    ]
+  },
+  "policy": {
+    "allow_code_removal": false,
+    "allow_display_change": true,
+    "rationale": "Det går däremot inte att göra förändringar som innebär att en kod tas bort."
+  },
+  "history": [
+    {
+      "Version": "1.0",
+      "Datum": "2020-01-15",
+      "Beskrivning": "Första version"
+    },
+    {
+      "Version": "1.1",
+      "Datum": "2021-06-01",
+      "Beskrivning": "Lagt till KV_EX_0003"
+    }
+  ]
+}

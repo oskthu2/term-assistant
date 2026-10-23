@@ -1,13 +1,14 @@
-"""Tillämpa en mall på rader och bygg ett FHIR CodeSystem."""
+"""Tillämpa en mall på rader och bygg FHIR-resurser (CodeSystem, ValueSet)."""
 
 from __future__ import annotations
 
 from datetime import date
 from typing import Any
 
-from .mapping import ColumnRole, ImportTemplate, PropertyDefinition
+from .mapping import ColumnRole, GeneratedCodeSystem, ImportTemplate, PropertyDefinition, SheetSource
+from .profiling import MARKERS
 
-_TRUE = {"ja", "j", "yes", "y", "true", "sant", "x", "1"}
+_TRUE = {"ja", "j", "yes", "y", "true", "sant", "1"} | MARKERS
 _FALSE = {"nej", "n", "no", "false", "falskt", "0", ""}
 
 _VALUE_KEY = {
@@ -20,14 +21,16 @@ class TransformError(ValueError):
     pass
 
 
-def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[str]]:
-    """Returnera (CodeSystem, varningar)."""
+def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
+                     sheet: SheetSource | None = None) -> tuple[dict[str, Any], list[str]]:
+    """Returnera (CodeSystem, varningar). ``sheet`` ger namn/URL/OID för ett blad i en familj."""
     problems = template.validate_template()
     if problems:
         raise TransformError("; ".join(problems))
     meta = template.codesystem
     props = {p.code: p for p in template.properties}
     code_col = template.column(ColumnRole.CODE).source_column
+    display_col = template.column(ColumnRole.DISPLAY)
     warnings: list[str] = []
     concepts: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -69,6 +72,20 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]]) -> tu
                 for parent in str(value).replace(";", ",").split(","):
                     if parent.strip():
                         concept.setdefault("property", []).append({"code": "parent", "valueCode": parent.strip()})
+            elif col.role == ColumnRole.CONTEXT:
+                if str(value).strip().lower() not in _TRUE:
+                    continue
+                gen = template.generated(col.context.codesystem)
+                target = next(c for c in gen.concepts if c.code == col.context.code)
+                coding = {"system": gen.url, "code": target.code, "display": target.display}
+                if col.context.mode == "property":
+                    concept.setdefault("property", []).append({"code": gen.property_code, "valueCoding": coding})
+                else:
+                    text_col = col.context.text_column or (display_col.source_column if display_col else None)
+                    text = row.get(text_col) if text_col else None
+                    if text:
+                        concept.setdefault("designation", []).append(
+                            {"language": meta.language, "use": coding, "value": str(text).strip()})
             elif col.role == ColumnRole.PROPERTY:
                 definition = props[col.property_code]
                 try:
@@ -84,24 +101,68 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]]) -> tu
             if prop["code"] == "parent" and prop["valueCode"] not in seen:
                 warnings.append(f"Kod '{concept['code']}': förälder '{prop['valueCode']}' finns inte i kodverket")
 
+    properties = [_property_resource(p) for p in template.properties]
+    for gen in template.generated_codesystems:
+        if any(c.role == ColumnRole.CONTEXT and c.context.mode == "property" and c.context.codesystem == gen.key
+               for c in template.columns):
+            properties.append({"code": gen.property_code, "uri": gen.url, "description": gen.title, "type": "Coding"})
+    name = sheet.name if sheet else meta.name
     codesystem = {
         "resourceType": "CodeSystem",
-        "url": meta.url,
+        "id": _resource_id(name),
+        "url": (sheet.url if sheet and sheet.url else meta.url),
+        "identifier": [{"system": "urn:ietf:rfc:3986", "value": sheet.identifier}]
+        if sheet and sheet.identifier else None,
         "version": meta.version,
-        "name": meta.name,
-        "title": meta.title,
+        "name": _fhir_name(name),
+        "title": (sheet.title if sheet and sheet.title else None) or meta.title or name,
         "status": "draft",
         "date": date.today().isoformat(),
-        "publisher": meta.publisher,
+        "publisher": (sheet.publisher if sheet and sheet.publisher else meta.publisher),
+        "description": meta.description,
+        "purpose": meta.purpose,
         "language": meta.language,
         "caseSensitive": meta.case_sensitive,
         "hierarchyMeaning": meta.hierarchy_meaning,
         "content": "complete",
         "count": len(concepts),
-        "property": [_property_resource(p) for p in template.properties],
+        "property": properties,
         "concept": concepts,
     }
     return {k: v for k, v in codesystem.items() if v not in (None, [])}, warnings
+
+
+def generated_codesystem(gen: GeneratedCodeSystem, template: ImportTemplate) -> dict[str, Any]:
+    """FHIR CodeSystem för ett kodverk som skapats av kolumnetiketter (kontexter, textroller)."""
+    return {
+        "resourceType": "CodeSystem",
+        "id": _resource_id(gen.name),
+        "url": gen.url,
+        "version": template.codesystem.version,
+        "name": _fhir_name(gen.name),
+        "title": gen.title,
+        "status": "draft",
+        "date": date.today().isoformat(),
+        "description": ("Användningskontexter som genererats från kolumnrubriker i källan."
+                        if gen.purpose == "usage-context" else
+                        "Designation-typer (textroller) som genererats från kolumnrubriker i källan."),
+        "language": template.codesystem.language,
+        "caseSensitive": True,
+        "content": "complete",
+        "count": len(gen.concepts),
+        "concept": [{"code": c.code, "display": c.display} for c in gen.concepts],
+    }
+
+
+def _resource_id(name: str) -> str:
+    """FHIR-id: [A-Za-z0-9-.]{1,64}."""
+    return "".join(ch if ch.isalnum() and ch.isascii() or ch in "-." else "-" for ch in name)[:64].strip("-")
+
+
+def _fhir_name(name: str) -> str:
+    """CodeSystem.name ska vara maskinläsbart: inled med versal, bara [A-Za-z0-9_]."""
+    cleaned = "".join(ch if ch.isascii() and (ch.isalnum() or ch == "_") else "_" for ch in name)
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else "CodeSystem"
 
 
 def _property_resource(p: PropertyDefinition) -> dict[str, Any]:

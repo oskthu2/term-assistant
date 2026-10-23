@@ -1,9 +1,10 @@
 {
-  "template_version": 1,
+  "template_version": 2,
+  "kind": "codesystem",
   "codesystem": {
-    "url": "http://example.org/fhir/CodeSystem/vardkontaktorsak",
-    "name": "Vardkontaktorsak",
-    "title": "Vårdkontaktens orsak",
+    "url": "http://example.org/fhir/CodeSystem/Kodverk",
+    "name": "Kodverk",
+    "title": "Kodverk",
     "version": "0.1.0",
     "language": "sv",
     "case_sensitive": true,
@@ -12,14 +13,20 @@
   "source": {
     "file": "examples/vardkontaktorsak.xlsx",
     "sheet": "Kodverk",
-    "header_row": 3
+    "header_row": 3,
+    "sheets": [
+      {
+        "sheet": "Kodverk",
+        "name": "Kodverk"
+      }
+    ]
   },
   "columns": [
     {
       "source_column": "Kod",
       "role": "code",
       "confidence": 0.95,
-      "rationale": "Unik (100%) och code-lik",
+      "rationale": "Unik till 100% och code-lik",
       "ui": {
         "label": "Kod",
         "order": 0,
@@ -225,5 +232,13 @@
       "type": "string",
       "description": "Ansvarig enhet"
     }
-  ]
+  ],
+  "generated_codesystems": [],
+  "external_systems": {},
+  "policy": {
+    "allow_code_removal": true,
+    "allow_display_change": true,
+    "rationale": ""
+  },
+  "history": []
 }
