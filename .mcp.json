@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "term-assistant": {
+      "command": "term-assistant",
+      "args": ["mcp"],
+      "env": {
+        "TX_BASE_URL": "https://tx.fhir.org/r4",
+        "TX_LANGUAGE": "sv",
+        "TERM_REGISTRY": "registry.json"
+      }
+    }
+  }
+}

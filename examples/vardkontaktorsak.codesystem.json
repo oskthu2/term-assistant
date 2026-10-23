@@ -1,0 +1,286 @@
+{
+  "resourceType": "CodeSystem",
+  "url": "http://example.org/fhir/CodeSystem/vardkontaktorsak",
+  "version": "0.1.0",
+  "name": "Vardkontaktorsak",
+  "title": "Vårdkontaktens orsak",
+  "status": "draft",
+  "date": "2026-10-23",
+  "language": "sv",
+  "caseSensitive": true,
+  "hierarchyMeaning": "is-a",
+  "content": "complete",
+  "count": 6,
+  "property": [
+    {
+      "code": "parent",
+      "uri": "http://hl7.org/fhir/concept-properties#parent",
+      "description": "Parent",
+      "type": "code"
+    },
+    {
+      "code": "effectiveDate",
+      "uri": "http://hl7.org/fhir/concept-properties#effectiveDate",
+      "description": "Effective Date",
+      "type": "dateTime"
+    },
+    {
+      "code": "inactive",
+      "uri": "http://hl7.org/fhir/concept-properties#inactive",
+      "description": "Inactive",
+      "type": "boolean"
+    },
+    {
+      "code": "comment",
+      "uri": "http://hl7.org/fhir/concept-properties#comment",
+      "description": "Comment",
+      "type": "string"
+    },
+    {
+      "code": "sorteringsordning",
+      "description": "Sorteringsordning",
+      "type": "integer"
+    },
+    {
+      "code": "ansvarigEnhet",
+      "description": "Ansvarig enhet",
+      "type": "string"
+    }
+  ],
+  "concept": [
+    {
+      "code": "A",
+      "display": "Akut",
+      "definition": "Oplanerad kontakt",
+      "designation": [
+        {
+          "value": "Acute",
+          "language": "en"
+        }
+      ],
+      "property": [
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "sorteringsordning",
+          "valueInteger": 1
+        },
+        {
+          "code": "ansvarigEnhet",
+          "valueString": "Enhet 1"
+        }
+      ]
+    },
+    {
+      "code": "A1",
+      "display": "Akut sjukdom",
+      "definition": "Akut insjuknande",
+      "property": [
+        {
+          "code": "parent",
+          "valueCode": "A"
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "sorteringsordning",
+          "valueInteger": 2
+        },
+        {
+          "code": "ansvarigEnhet",
+          "valueString": "Enhet 1"
+        }
+      ],
+      "designation": [
+        {
+          "value": "Acute illness",
+          "language": "en"
+        },
+        {
+          "value": "Akut insjuknande",
+          "language": "sv",
+          "use": {
+            "system": "http://snomed.info/sct",
+            "code": "900000000000013009",
+            "display": "Synonym"
+          }
+        }
+      ]
+    },
+    {
+      "code": "A2",
+      "display": "Olycksfall",
+      "definition": "Skada genom olycka",
+      "property": [
+        {
+          "code": "parent",
+          "valueCode": "A"
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "comment",
+          "valueString": "Se även B2"
+        },
+        {
+          "code": "sorteringsordning",
+          "valueInteger": 3
+        },
+        {
+          "code": "ansvarigEnhet",
+          "valueString": "Enhet 2"
+        }
+      ],
+      "designation": [
+        {
+          "value": "Accident",
+          "language": "en"
+        },
+        {
+          "value": "Olycka",
+          "language": "sv",
+          "use": {
+            "system": "http://snomed.info/sct",
+            "code": "900000000000013009",
+            "display": "Synonym"
+          }
+        },
+        {
+          "value": "Trauma",
+          "language": "sv",
+          "use": {
+            "system": "http://snomed.info/sct",
+            "code": "900000000000013009",
+            "display": "Synonym"
+          }
+        }
+      ]
+    },
+    {
+      "code": "P",
+      "display": "Planerad",
+      "definition": "Planerad kontakt",
+      "designation": [
+        {
+          "value": "Planned",
+          "language": "en"
+        }
+      ],
+      "property": [
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "sorteringsordning",
+          "valueInteger": 4
+        },
+        {
+          "code": "ansvarigEnhet",
+          "valueString": "Enhet 1"
+        }
+      ]
+    },
+    {
+      "code": "P1",
+      "display": "Återbesök",
+      "definition": "Planerat återbesök",
+      "property": [
+        {
+          "code": "parent",
+          "valueCode": "P"
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2021-03-01"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "sorteringsordning",
+          "valueInteger": 5
+        },
+        {
+          "code": "ansvarigEnhet",
+          "valueString": "Enhet 2"
+        }
+      ],
+      "designation": [
+        {
+          "value": "Follow-up",
+          "language": "en"
+        },
+        {
+          "value": "Uppföljning",
+          "language": "sv",
+          "use": {
+            "system": "http://snomed.info/sct",
+            "code": "900000000000013009",
+            "display": "Synonym"
+          }
+        }
+      ]
+    },
+    {
+      "code": "P2",
+      "display": "Screening",
+      "definition": "Kallelse till screening",
+      "property": [
+        {
+          "code": "parent",
+          "valueCode": "P"
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2021-03-01"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": true
+        },
+        {
+          "code": "comment",
+          "valueString": "Utgår 2024"
+        },
+        {
+          "code": "sorteringsordning",
+          "valueInteger": 6
+        },
+        {
+          "code": "ansvarigEnhet",
+          "valueString": "Enhet 2"
+        }
+      ],
+      "designation": [
+        {
+          "value": "Screening",
+          "language": "en"
+        }
+      ]
+    }
+  ]
+}

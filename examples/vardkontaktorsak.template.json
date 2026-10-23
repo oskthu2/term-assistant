@@ -1,0 +1,229 @@
+{
+  "template_version": 1,
+  "codesystem": {
+    "url": "http://example.org/fhir/CodeSystem/vardkontaktorsak",
+    "name": "Vardkontaktorsak",
+    "title": "Vårdkontaktens orsak",
+    "version": "0.1.0",
+    "language": "sv",
+    "case_sensitive": true,
+    "hierarchy_meaning": "is-a"
+  },
+  "source": {
+    "file": "examples/vardkontaktorsak.xlsx",
+    "sheet": "Kodverk",
+    "header_row": 3
+  },
+  "columns": [
+    {
+      "source_column": "Kod",
+      "role": "code",
+      "confidence": 0.95,
+      "rationale": "Unik (100%) och code-lik",
+      "ui": {
+        "label": "Kod",
+        "order": 0,
+        "visible": true,
+        "editable": false,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "Benämning",
+      "role": "display",
+      "confidence": 0.9,
+      "rationale": "Rubriken liknar en benämning",
+      "ui": {
+        "label": "Benämning",
+        "order": 1,
+        "visible": true,
+        "editable": true,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "Beskrivning",
+      "role": "definition",
+      "confidence": 0.85,
+      "rationale": "Rubriken anger definition/beskrivning",
+      "ui": {
+        "label": "Beskrivning",
+        "order": 2,
+        "visible": true,
+        "editable": true,
+        "widget": "textarea"
+      }
+    },
+    {
+      "source_column": "Överordnad kod",
+      "role": "parent",
+      "confidence": 0.9,
+      "rationale": "Värdena är koder i kodkolumnen",
+      "ui": {
+        "label": "Överordnad kod",
+        "order": 3,
+        "visible": true,
+        "editable": true,
+        "widget": "concept-picker"
+      }
+    },
+    {
+      "source_column": "Benämning (en)",
+      "role": "designation",
+      "designation": {
+        "language": "en"
+      },
+      "confidence": 0.85,
+      "rationale": "Benämning på språket 'en'",
+      "ui": {
+        "label": "Benämning (en)",
+        "order": 4,
+        "visible": true,
+        "editable": true,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "Synonymer",
+      "role": "designation",
+      "designation": {
+        "language": "sv",
+        "use_system": "http://snomed.info/sct",
+        "use_code": "900000000000013009",
+        "use_display": "Synonym"
+      },
+      "confidence": 0.95,
+      "rationale": "Registret: exakt alias 'synonymer'",
+      "ui": {
+        "label": "Synonymer",
+        "order": 5,
+        "visible": true,
+        "editable": true,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "Giltig fr.o.m.",
+      "role": "property",
+      "property_code": "effectiveDate",
+      "confidence": 1.0,
+      "rationale": "Registret: exakt alias 'giltig fr o m'",
+      "ui": {
+        "label": "Giltig fr.o.m.",
+        "order": 6,
+        "visible": true,
+        "editable": true,
+        "widget": "date"
+      }
+    },
+    {
+      "source_column": "Inaktiv",
+      "role": "property",
+      "property_code": "inactive",
+      "confidence": 1.0,
+      "rationale": "Registret: exakt alias 'inaktiv'",
+      "ui": {
+        "label": "Inaktiv",
+        "order": 7,
+        "visible": true,
+        "editable": true,
+        "widget": "checkbox"
+      }
+    },
+    {
+      "source_column": "Anmärkning",
+      "role": "property",
+      "property_code": "comment",
+      "confidence": 1.0,
+      "rationale": "Registret: exakt alias 'anmarkning'",
+      "ui": {
+        "label": "Anmärkning",
+        "order": 8,
+        "visible": true,
+        "editable": true,
+        "widget": "text"
+      }
+    },
+    {
+      "source_column": "Sorteringsordning",
+      "role": "property",
+      "property_code": "sorteringsordning",
+      "confidence": 0.4,
+      "rationale": "Ingen befintlig egenskap matchar – föreslår ny egenskap",
+      "ui": {
+        "label": "Sorteringsordning",
+        "order": 9,
+        "visible": true,
+        "editable": true,
+        "widget": "number"
+      }
+    },
+    {
+      "source_column": "Ansvarig enhet",
+      "role": "property",
+      "property_code": "ansvarigEnhet",
+      "confidence": 0.4,
+      "rationale": "Ingen befintlig egenskap matchar – föreslår ny egenskap",
+      "ui": {
+        "label": "Ansvarig enhet",
+        "order": 10,
+        "visible": true,
+        "editable": true,
+        "widget": "select",
+        "options": [
+          "Enhet 1",
+          "Enhet 2"
+        ]
+      }
+    },
+    {
+      "source_column": "Tom",
+      "role": "ignore",
+      "confidence": 0.9,
+      "rationale": "Kolumnen är tom",
+      "ui": {
+        "label": "Tom",
+        "order": 11,
+        "visible": false,
+        "editable": true,
+        "widget": "text"
+      }
+    }
+  ],
+  "properties": [
+    {
+      "code": "parent",
+      "uri": "http://hl7.org/fhir/concept-properties#parent",
+      "type": "code",
+      "description": "Parent"
+    },
+    {
+      "code": "effectiveDate",
+      "uri": "http://hl7.org/fhir/concept-properties#effectiveDate",
+      "type": "dateTime",
+      "description": "Effective Date"
+    },
+    {
+      "code": "inactive",
+      "uri": "http://hl7.org/fhir/concept-properties#inactive",
+      "type": "boolean",
+      "description": "Inactive"
+    },
+    {
+      "code": "comment",
+      "uri": "http://hl7.org/fhir/concept-properties#comment",
+      "type": "string",
+      "description": "Comment"
+    },
+    {
+      "code": "sorteringsordning",
+      "type": "integer",
+      "description": "Sorteringsordning"
+    },
+    {
+      "code": "ansvarigEnhet",
+      "type": "string",
+      "description": "Ansvarig enhet"
+    }
+  ]
+}
