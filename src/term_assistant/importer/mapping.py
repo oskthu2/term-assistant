@@ -187,6 +187,9 @@ class ImportTemplate(BaseModel):
     text_catalogue: TextCatalogue | None = None
     policy: ReleasePolicy = ReleasePolicy()
     history: list[dict] = []
+    namespace: str | None = Field(None, description="Nyckel för vald namnrymd (URL-mönster, OID-rot)")
+    classification: str | None = Field(None, description="Informationsklass, t.ex. 'öppen' eller 'intern'")
+    license_note: str | None = Field(None, description="Licensvillkor som följer med paketet")
 
     def column(self, role: ColumnRole) -> ColumnMapping | None:
         return next((c for c in self.columns if c.role == role), None)

@@ -154,7 +154,9 @@ rollen på rätt begrepp i rätt kodverk.
 
 ### Urval ur befintliga kodsystem
 
-En lista med t.ex. NPU-koder är inget nytt kodverk. Den blir ett ValueSet med
+En lista med t.ex. NPU-koder är inget nytt kodverk. SWE-koderna räknas till
+samma kodsystem som NPU (`http://npu-terminology.org`), så som de ligger i
+Ineras NPU-lista. Den blir ett ValueSet med
 listans egna visningsnamn som `concept.display`, plus ett ValueSet per grupp.
 En kod får finnas i flera grupper. För externa system anges canonical URL i
 mallen (`external_systems`). URL:er som inte är bekräftade (NPU, SWE-tillägg,
@@ -236,8 +238,80 @@ inget CDN). Den har tre bärande beslut:
 
 Releaseflödet är: arbetskopia → `X.Y.Z-rc.N` (draft, diff mot senaste
 release, policykontroll) → godkänd release `X.Y.Z` (active) → valfri
-publicering med `PUT` till terminologitjänsten. Publiceringen kräver
-`TX_PUBLISH=1`. Allt loggas med användarnamnet från `X-Remote-User`.
+publicering som paket till en inläsningskatalog eller med `PUT` till en
+terminologitjänst (det senare kräver `TX_PUBLISH=1`). Allt loggas med
+användarnamnet från `X-Remote-User`.
+
+## Identitet, klassning och paket
+
+* **Namnrymd** väljs vid inläsning (`settings.json`). Den ger bas-URL,
+  URL-mönster, OID-rot och förvald utgivare. En releasekandidat spärras om
+  någon resurs inte följer mönstret, eller om OID krävs men saknas eller
+  ligger utanför roten. "Tilldela OID" ger nästa lediga båge under roten och
+  räknar även med bågar som används av underliggande OID:er.
+* **Informationsklass** (t.ex. öppen/intern/begränsad) följer projektet. Den
+  märks på varje resurs i `meta.security` (v3-Confidentiality, med
+  kodsystemets egna displaytexter) och i paketets `package.json`. Licensvillkor
+  (`license_note`) följer med som `other/license.md`. Varje publiceringsmål tar
+  emot högst en viss klass.
+* **FHIR-paket** (`.tgz`, NPM-format) är releasens leverans för inläsning:
+  `package.json` (namn från namnrymdens prefix, `fhirVersions` och beroende på
+  core-paketet enligt `FHIR_VERSION`), `.index.json`, en fil per resurs,
+  `other/release-notes.md` och `other/provenance.json`.
+
+## Validering
+
+Varje releasekandidat profilvalideras inbyggt mot Shareable-profilernas krav
+och resursernas invarianter (`importer/validate.py`). Fel spärrar kandidaten,
+varningar visas. På releasesidan, eller med `term-assistant validate-package`,
+kan dessutom HL7:s officiella validator köras på paketet
+(`FHIR_VALIDATOR_JAR`), utan eller mot terminologitjänsten.
+
+Exempelpaketen ger 0 fel i HL7-validatorn. De varningar som återstår är
+väntade:
+
+* `designation.use` med egna koder (kontext, textroll) finns inte i FHIR:s
+  `designation-use`-värdemängd. Bindningen är bara rekommenderad, och de egna
+  koderna är ett medvetet val.
+* Språkkoder kan inte kontrolleras utan terminologiserver.
+* `replacedBy` saknar URI, eftersom FHIR R4 inte har någon standardegenskap
+  för ersättning. Den interoperabla uttrycksformen är ConceptMap.
+
+## Ersatta koder och urval som behöver hanteras
+
+Ett avvecklat begrepp får `inactive = true` och kan peka på en ersättare i
+samma kodverk (`replacedBy`, relation och kommentar). Releasen får då en
+ConceptMap från avvecklad till ersättande kod (R4: `equivalence`, R5:
+`relationship`), som mottagare kan använda med `$translate`.
+
+"Kontrollera urvalet" flaggar koder i ett ValueSet-projekt. Det finns två
+källor:
+
+1. **Lokalt förvaltade kodverk** (senaste release i arbetsytan): avvecklade
+   koder, med ersättaren som förslag, och koder som inte finns.
+2. **Terminologitjänsten**: `$validate-code` (okänd/inaktiv). För flaggade
+   koder görs också `$lookup` (egenskaper som `replacedBy`) och `$translate`
+   för att hitta förslag.
+
+Flaggorna visas i tabellen och på begreppet, där en ersättare byts in med ett
+klick. Bytet loggas med källa.
+
+## Redaktionell kedja
+
+```
+förslag (manuellt eller AI) → granskning (annan person) → införande → releasekandidat → godkännande (fyra ögon) → paket/publicering
+```
+
+* AI-förslag går alltid via granskning. De sparas med modell, tidpunkt,
+  kontrollsumma för underlaget, förbrukning och motivering.
+* Manuella ändringar går via granskning om `review_manual_edits` är på.
+  Annars införs de direkt och loggas.
+* Ett förslag förs bara in om raden fortfarande har värdena förslaget utgick
+  från. Annars blir det *inaktuellt*.
+* Öppna förslag spärrar releasekandidat (inställbart). Godkännaren av en
+  release får inte vara den som skapade kandidaten.
+* Godkända förslag och releasen blir FHIR Provenance i paketet. Agenterna är
+  författare (eller "AI: <modell>"), granskare och godkännare.
 
 ## Nästa steg
 

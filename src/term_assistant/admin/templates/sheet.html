@@ -9,6 +9,10 @@
   <input type="search" id="filter" placeholder="Filtrera …" aria-label="Filtrera rader">
   <span class="small muted"><span id="count">{{ data.rows | length }}</span> av {{ data.rows | length }} rader</span>
   <a class="button" href="/p/{{ project.id }}/s/{{ quote(sheet) }}/new">Nytt begrepp</a>
+  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/ai" class="inline"
+        onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'AI granskar …'">
+    <button type="submit" class="secondary" title="Claude föreslår rättelser; förslagen granskas innan de förs in">AI-granskning</button></form>
+  {% if flags %}<span class="badge bad">{{ flags | length }} flaggade koder</span>{% endif %}
 </div>
 <div class="tablewrap">
 <table id="concepts">
@@ -37,7 +41,9 @@
     {% for i, c in columns %}
       {% set v = cell(tpl, c, row, sheet) %}
       {% if c.role == ColumnRole.CODE %}
-        <td class="mono"><a href="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(code|string) }}">{{ code }}</a>{% if released and code|string not in released %} <span class="badge warn" title="Inte släppt ännu">ny</span>{% endif %}</td>
+        <td class="mono"><a href="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(code|string) }}">{{ code }}</a>{% if released and code|string not in released %} <span class="badge warn" title="Inte släppt ännu">ny</span>{% endif %}
+          {% if code|string in flags %}{% set f = flags[code|string] %}<span class="badge bad" title="{{ f.message }}">{{ f.status }}</span>{% if f.suggestions %} <span class="small">→ {{ f.suggestions[0].code }}</span>{% endif %}{% endif %}
+          {% if code|string in pending %} <span class="badge" title="Det finns förslag som väntar på granskning">förslag</span>{% endif %}</td>
       {% elif v is sameas true %}<td class="center">✓</td>
       {% elif v is sameas false %}<td class="center muted"></td>
       {% elif c.role == ColumnRole.DERIVED %}<td class="mono small muted">{{ v or '' }}</td>

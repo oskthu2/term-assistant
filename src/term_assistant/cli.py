@@ -142,6 +142,22 @@ def cmd_confirm(args: argparse.Namespace) -> None:
         _write(confirm_mapping(template.model_dump(mode="json")), None)
 
 
+def cmd_validate_package(args: argparse.Namespace) -> None:
+    from .config import fhir_version
+    from .importer.validate import validate_package_file
+    result = validate_package_file(Path(args.file).read_bytes(), fhir_version(), args.jar, args.tx)
+    _err(f"{args.file}: {result['files']} resurser")
+    for e in result["builtin_errors"]:
+        _err(f"  ✗ {e}")
+    if "errors" in result:
+        _err(f"HL7-validatorn: {len(result['errors'])} fel, {len(result['warnings'])} varningar")
+        for e in result["errors"]:
+            _err(f"  ✗ {e}")
+    else:
+        _err("HL7-validatorn kördes inte (ange --jar eller FHIR_VALIDATOR_JAR).")
+    sys.exit(1 if result["builtin_errors"] or result.get("errors") else 0)
+
+
 def cmd_diff(args: argparse.Namespace) -> None:
     old = json.loads(Path(args.old).read_text(encoding="utf-8"))
     new = json.loads(Path(args.new).read_text(encoding="utf-8"))
@@ -200,6 +216,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("new")
     p.add_argument("--template", help="Kontrollera mot mallens releasepolicy")
     p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser("validate-package", help="Validera ett FHIR-paket (.tgz), även med HL7-validatorn")
+    p.add_argument("file")
+    p.add_argument("--jar", help="Sökväg till validator_cli.jar (annars FHIR_VALIDATOR_JAR)")
+    p.add_argument("--tx", default="n/a", help="Terminologiserver för validatorn, t.ex. TX_BASE_URL")
+    p.set_defaults(func=cmd_validate_package)
 
     p = sub.add_parser("admin", help="Starta administrationsvyn (webbapp)")
     p.add_argument("--workspace", default="arbetsyta", help="Katalog för projekt och releaser")

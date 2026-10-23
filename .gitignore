@@ -6,3 +6,4 @@ build/
 dist/
 arbetsyta/
 registry.json
+*.tgz

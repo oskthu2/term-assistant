@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Inställningar{% endblock %}
+{% block content %}
+<h1>Inställningar</h1>
+<p>Arbetsytans inställningar läses från <span class="mono">{{ path }}</span>. Ändra filen och ladda om sidan.
+FHIR-versionen styrs av miljövariabeln <span class="mono">FHIR_VERSION</span> (nu {{ fhir_version() }}).</p>
+<div class="grid">
+  <div class="panel small"><h3>Namnrymder</h3>
+    {% for ns in settings.namespaces %}<div><b>{{ ns.label }}</b> <span class="mono">{{ ns.base_url }}</span>
+      {% if ns.oid_root %}· OID-rot <span class="mono">{{ ns.oid_root }}</span>{% endif %}{% if ns.require_oid %} · OID krävs{% endif %}</div>{% endfor %}</div>
+  <div class="panel small"><h3>Informationsklasser</h3>
+    {% for c in settings.classifications %}<div><b>{{ c.label }}</b> ({{ c.confidentiality }}) – {{ c.description }}</div>{% endfor %}</div>
+  <div class="panel small"><h3>Mål</h3>
+    {% for t in settings.targets %}<div><b>{{ t.label }}</b> · {{ t.kind }} · högst {{ settings.classification(t.max_classification).label }}</div>{% endfor %}</div>
+  <div class="panel small"><h3>Redaktionella regler</h3>
+    <div>Manuella ändringar granskas: {{ 'ja' if settings.editorial.review_manual_edits else 'nej' }}</div>
+    <div>Fyra ögon vid release: {{ 'ja' if settings.editorial.four_eyes_release else 'nej' }}</div>
+    <div>Öppna förslag spärrar releasekandidat: {{ 'ja' if settings.editorial.block_rc_with_open_proposals else 'nej' }}</div></div>
+</div>
+<h2>settings.json</h2>
+<pre>{{ settings_json }}</pre>
+{% endblock %}

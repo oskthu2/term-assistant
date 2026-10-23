@@ -7,15 +7,49 @@
 <p class="small muted">Skapad {{ rel.created[:16].replace('T', ' ') }} av {{ rel.author }}{% if rel.based_on %} · bygger på {{ rel.based_on }}{% endif %}</p>
 {% if rel.notes %}<div class="panel">{{ rel.notes }}</div>{% endif %}
 <div class="actions">
-  <a class="button secondary" href="/p/{{ project.id }}/releases/{{ rel.version }}/bundle.json">Ladda ner (FHIR Bundle)</a>
-  {% if rel.status == 'rc' %}
-  <form method="post" action="/p/{{ project.id }}/releases/{{ rel.version }}/approve" class="inline"
-        onsubmit="return confirm('Godkänn {{ rel.version }} som release?')"><button type="submit">Godkänn som release</button></form>
-  {% elif publish_enabled() %}
-  <form method="post" action="/p/{{ project.id }}/releases/{{ rel.version }}/publish" class="inline"
-        onsubmit="return confirm('Publicera till {{ tx_url() }}?')"><button type="submit">Publicera till terminologitjänsten</button></form>
-  {% else %}<span class="small muted">Publicering till terminologitjänsten slås på med TX_PUBLISH=1.</span>{% endif %}
+  <a class="button" href="/p/{{ project.id }}/releases/{{ rel.version }}/package.tgz">Ladda ner paket (.tgz)</a>
+  <a class="button secondary" href="/p/{{ project.id }}/releases/{{ rel.version }}/bundle.json">FHIR Bundle (.json)</a>
+  <span class="small muted">Informationsklass: <b>{{ classification.label }}</b> – märks i paketet och på varje resurs.</span>
 </div>
+<div class="panel">
+  <h3>Validering av paketet</h3>
+  <form method="post" action="/p/{{ project.id }}/releases/{{ rel.version }}/validate" class="actions"
+        onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Validerar …'">
+    <select name="tx" style="max-width:320px"><option value="n/a">utan terminologiserver</option>
+      <option value="server">mot {{ tx_url() }}</option></select>
+    <button type="submit" class="secondary">Validera paketet{{ ' (HL7-validatorn)' if validator_enabled() }}</button>
+    {% if not validator_enabled() %}<span class="small muted">HL7-validatorn används om FHIR_VALIDATOR_JAR är satt; annars bara den inbyggda kontrollen.</span>{% endif %}
+  </form>
+  {% set v = rel.hl7_validation %}
+  {% if v %}
+  <p class="small">{{ v.time[:16].replace('T', ' ') }} · {{ v.by }} · tx: {{ v.tx }} · {{ v.files }} resurser ·
+    <span class="badge {{ 'bad' if v.builtin_errors or v.get('errors') else 'ok' }}">{{ (v.builtin_errors | length) + (v.get('errors') or []) | length }} fel</span>
+    {% if v.get('warnings') is not none %}<span class="badge warn">{{ v.warnings | length }} varningar</span>{% endif %}</p>
+  {% for e in v.builtin_errors + (v.get('errors') or []) %}<div class="small diff-del">{{ e }}</div>{% endfor %}
+  {% if v.get('warnings') %}<details class="small"><summary>Varningar</summary>{% for w in v.warnings[:200] %}<div class="muted">{{ w }}</div>{% endfor %}</details>{% endif %}
+  {% endif %}
+</div>
+{% if rel.status == 'rc' %}
+<form method="post" action="/p/{{ project.id }}/releases/{{ rel.version }}/approve" class="panel"
+      onsubmit="return confirm('Godkänn {{ rel.version }} som release?')">
+  <h3>Godkännande</h3>
+  {% if settings.editorial.four_eyes_release %}<p class="small">Fyra ögon: kandidaten skapades av <b>{{ rel.author }}</b> och måste godkännas av någon annan.</p>{% endif %}
+  <button type="submit">Godkänn som release</button>
+</form>
+{% else %}
+<div class="panel">
+  <h3>Publicera</h3>
+  {% for t, ok in targets %}
+  <form method="post" action="/p/{{ project.id }}/releases/{{ rel.version }}/publish" class="actions"
+        onsubmit="return confirm('Publicera {{ rel.version }} till {{ t.label }}?')">
+    <input type="hidden" name="target" value="{{ t.key }}">
+    <button type="submit" {{ 'disabled' if not ok or (t.kind == 'fhir-api' and not publish_enabled()) }}>{{ t.label }}</button>
+    <span class="small muted">{{ 'paket till ' ~ t.directory if t.kind == 'package-dir' else 'FHIR-API ' ~ (t.base_url or tx_url()) }} · tar emot högst {{ settings.classification(t.max_classification).label }}
+      {% if not ok %}<span class="badge bad">spärrad för {{ classification.label }}</span>{% elif t.kind == 'fhir-api' and not publish_enabled() %}<span class="badge muted">TX_PUBLISH=1 saknas</span>{% endif %}</span>
+  </form>
+  {% endfor %}
+</div>
+{% endif %}
 <h3>Ändringar per resurs</h3>
 <table>
   <tr><th>Resurs</th><th>Tillagda</th><th>Borttagna</th><th>Ändrade</th></tr>

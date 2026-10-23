@@ -10,8 +10,19 @@ Därefter underhålls kodverket här i stället för i kalkylarket.</p>
   <label for="file">Fil (Excel, CSV eller PDF)</label>
   <input type="file" id="file" name="file" accept=".xlsx,.xlsm,.csv,.tsv,.txt,.pdf" required>
   <div class="formgrid">
-    <div><label for="base_url">Bas-URL för canonical URL:er</label>
-      <input type="url" id="base_url" name="base_url" value="{{ base_url }}"></div>
+    <div><label for="namespace">Namnrymd (canonical URL, OID-rot, utgivare)</label>
+      <select id="namespace" name="namespace">
+        {% for ns in settings.namespaces %}<option value="{{ ns.key }}">{{ ns.label }} – {{ ns.base_url }}</option>{% endfor %}
+        {% if settings.allow_custom_namespace %}<option value="">Egen bas-URL …</option>{% endif %}
+      </select></div>
+    {% if settings.allow_custom_namespace %}
+    <div><label for="base_url">Egen bas-URL (om ingen namnrymd valts)</label>
+      <input type="url" id="base_url" name="base_url" placeholder="{{ base_url }}"></div>
+    {% endif %}
+    <div><label for="classification">Informationsklass</label>
+      <select id="classification" name="classification">
+        {% for c in settings.classifications %}<option value="{{ c.key }}" {{ 'selected' if c.key == settings.default_classification }}>{{ c.label }} – {{ c.description }}</option>{% endfor %}
+      </select></div>
     <div><label for="language">Språk</label><input type="text" id="language" name="language" value="sv"></div>
   </div>
   <div class="actions"><button type="submit">Bedöm filen</button></div>

@@ -61,3 +61,4 @@ ul.plain { list-style: none; padding: 0; margin: 0; } ul.plain li { padding: 4px
 .q-resolved { color: var(--muted); text-decoration: line-through; }
 pre { background: var(--bg); border: 1px solid var(--line); padding: 10px; border-radius: var(--radius); overflow: auto; font-size: 12px; }
 .diff-add { color: var(--ok); } .diff-del { color: var(--bad); } .diff-chg { color: var(--warn); }
+button:disabled, button[disabled] { opacity: .45; cursor: not-allowed; }

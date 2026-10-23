@@ -5,8 +5,8 @@
 <div class="grid">
 <form method="post" action="/p/{{ project.id }}/releases" class="panel">
   <h3>Ny releasekandidat</h3>
-  <p class="small muted">Arbetskopian byggs till FHIR, jämförs med senaste release och kontrolleras mot
-  kodverkets regler. Kandidaten får versionen <span class="mono">X.Y.Z-rc.N</span> och status draft.</p>
+  <p class="small muted">Arbetskopian byggs till FHIR {{ fhir_version() }}, profilvalideras, kontrolleras mot namnrymden
+  och kodverkets regler och jämförs med senaste release. Kandidaten får versionen <span class="mono">X.Y.Z-rc.N</span> och status draft.</p>
   <label>Version</label><input type="text" name="version" value="{{ suggested }}" pattern="\d+\.\d+\.\d+" required>
   <label>Releaseanteckning</label><textarea name="notes" placeholder="Vad är nytt?"></textarea>
   <div class="actions"><button type="submit">Skapa releasekandidat</button>
@@ -15,12 +15,13 @@
 <div class="panel">
   <h3>Arbetskopian</h3>
   <ul class="plain small">{% for r in preview %}<li>{{ r.resourceType }} <span class="mono">{{ r.name }}</span> –
-    {{ r.count if r.count is defined else (r.compose.include | sum(attribute='concept', start=[]) | length) }} koder</li>{% endfor %}</ul>
+    {{ code_count(r) }} {{ 'mappningar' if r.resourceType == 'ConceptMap' else 'koder' }}</li>{% endfor %}</ul>
   {% if warnings %}<h3>Varningar</h3><ul class="small">{% for w in warnings[:30] %}<li class="diff-chg">{{ w }}</li>{% endfor %}</ul>{% endif %}
   {% if project.template.kind == 'valueset' %}
-  <form method="post" action="/p/{{ project.id }}/validate" class="actions">
-    <button type="submit" class="secondary">Validera koderna mot terminologitjänsten</button></form>
+  <form method="post" action="/p/{{ project.id }}/check" class="actions">
+    <button type="submit" class="secondary">Kontrollera urvalet (flaggar koder som behöver hanteras)</button></form>
   {% endif %}
+  {% if open_proposals %}<p class="small diff-chg">{{ open_proposals }} förslag väntar på granskning.</p>{% endif %}
 </div>
 </div>
 <h2>Historik</h2>

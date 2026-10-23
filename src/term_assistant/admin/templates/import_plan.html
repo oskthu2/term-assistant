@@ -7,6 +7,8 @@
 <div class="crumbs"><a href="/">Projekt</a> › <a href="/import">Ny inläsning</a> › {{ assessment.file }}</div>
 <h1>{{ assessment.file }} {{ verdict_badge(assessment.verdict) }}</h1>
 
+<p class="small muted">Namnrymd: {{ (settings.namespace(choices.namespace).label if settings.namespace(choices.namespace) else 'egen') }} ·
+Informationsklass: {{ settings.classification(choices.classification).label }}</p>
 {% if assessment.tips %}
 <div class="panel"><h3>Tips</h3><ul>{% for t in assessment.tips %}<li>{{ t }}</li>{% endfor %}</ul></div>
 {% endif %}

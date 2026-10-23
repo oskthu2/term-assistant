@@ -30,11 +30,12 @@ pytest
 ### Administrationsvyn (webbapp)
 
 ```bash
-term-assistant admin --workspace ./arbetsyta --base-url https://terminologi.example.se/fhir
+term-assistant admin --workspace ./arbetsyta
 # öppna http://127.0.0.1:8000
 ```
 
-1. **Ny inläsning**: ladda upp Excel, CSV eller PDF. Du ser bedömningen per flik (avvisad med tips,
+1. **Ny inläsning**: ladda upp Excel, CSV eller PDF och välj **namnrymd** (canonical URL, OID-rot,
+   utgivare) och **informationsklass**. Du ser bedömningen per flik (avvisad med tips,
    urval, familj, referenslista …) och ett mallförslag per kodverk eller urval.
 2. **Skapa projekt**: raderna kopieras in, en gång. Textkataloger viks in som vanliga kolumner,
    och härledda kolumner (t.ex. `KV_X.KOD.RBK`) räknas fram i stället för att lagras.
@@ -42,14 +43,48 @@ term-assistant admin --workspace ./arbetsyta --base-url https://terminologi.exam
    rullistor, datum och överordnad kod. Varje ändring loggas med användarnamn.
 4. **Kolumner**: byt vad en kolumn står för (egenskap, designation, kontext …) eller lägg till
    nya. Befintliga egenskaper från registret föreslås först. Raderna behöver inte migreras.
-5. **Releaser**: en releasekandidat (`X.Y.Z-rc.N`) byggs till FHIR och jämförs med senaste
-   release. Den kontrolleras också mot reglerna: borttag av släppta koder spärras om policyn
-   kräver det, och då avvecklar man i stället. Godkänn sedan som release, ladda ner som
-   Bundle eller publicera till terminologitjänsten (`TX_PUBLISH=1`).
-6. **Urval**: kör `$validate-code` för alla koder mot `TX_BASE_URL` direkt från vyn.
+5. **Avveckling och ersättning**: ett begrepp avvecklas (inaktivt) i stället för att tas bort,
+   valfritt med en ersättande kod och relation. Det ger egenskapen `replacedBy` och en
+   ConceptMap (`<namn>_ERSATTNINGAR`) i releasen.
+6. **Redaktionell kedja**: ändringar kan gå som förslag som en annan person granskar.
+   AI-granskning (Claude) föreslår rättelser som alltid granskas och sparas med proveniens.
+7. **Releaser**: en releasekandidat (`X.Y.Z-rc.N`) byggs till FHIR. Den profilvalideras och
+   kontrolleras mot namnrymden (URL-mönster, OID) och mot reglerna, där borttag av släppta koder
+   spärras om policyn kräver det. Den jämförs också med senaste release. Godkännandet kräver
+   fyra ögon. Releasen laddas ner som **FHIR-paket** (`.tgz`) eller publiceras till ett mål;
+   målen spärras efter informationsklass.
+8. **Urval**: "Kontrollera urvalet" flaggar inaktiva, okända och ersatta koder, med källor
+   både i lokalt förvaltade kodverk och i terminologitjänsten (`$validate-code`, `$lookup`,
+   `$translate`). Förslag på ersättare byts in med ett klick.
 
 Vyn har ingen egen inloggning. Kör den bakom en proxy som skickar `X-Remote-User`.
 Projekten lagras som JSON i arbetsytan och går att versionshantera med git.
+
+**Inställningar** (`<arbetsyta>/settings.json`, visas under *Inställningar*):
+
+```json
+{
+  "namespaces": [{"key": "region", "label": "Regionens kodverk", "base_url": "https://terminologi.example.se/fhir",
+                  "oid_root": "1.2.752.xxx.yy", "require_oid": true, "publisher": "Region X",
+                  "package_prefix": "se.regionx.kodverk"}],
+  "classifications": [{"key": "öppen", "label": "Öppen", "confidentiality": "U", "rank": 0},
+                      {"key": "intern", "label": "Intern", "confidentiality": "N", "rank": 1},
+                      {"key": "begränsad", "label": "Begränsad", "confidentiality": "R", "rank": 2}],
+  "targets": [{"key": "ontoserver", "label": "Inläsning Ontoserver", "kind": "package-dir",
+               "directory": "/srv/ontoserver/paket", "max_classification": "intern"},
+              {"key": "publik", "label": "Publik testserver", "kind": "fhir-api",
+               "base_url": "https://tx-nordics.fhir.org/fhir", "max_classification": "öppen"}],
+  "editorial": {"review_manual_edits": true, "four_eyes_release": true, "block_rc_with_open_proposals": true}
+}
+```
+
+| Miljövariabel | Betydelse |
+|---|---|
+| `FHIR_VERSION` | `R4` (standard) eller `R5` för hela lösningen: paketens `fhirVersions`, ConceptMap (`equivalence`/`relationship`), validering |
+| `TX_BASE_URL`, `TX_TOKEN` | terminologitjänst för uppslag, kontroll av urval och API-publicering |
+| `TX_PUBLISH=1` | slår på publicering via FHIR-API (paketmål kräver det inte) |
+| `FHIR_VALIDATOR_JAR` | sökväg till HL7:s `validator_cli.jar`; används då vid "Validera paketet" och `term-assistant validate-package` |
+| `ANTHROPIC_API_KEY` | för AI-granskning (eller `ant auth login`) |
 
 ### MCP-servern
 

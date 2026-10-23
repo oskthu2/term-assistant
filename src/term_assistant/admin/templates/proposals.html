@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Förslag – {{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'proposals' %}{% include "_project_tabs.html" %}
+<p>Den redaktionella kedjan: förslag (manuella{% if not settings.editorial.review_manual_edits %} – när granskning är påslagen{% endif %} och från AI)
+granskas av en annan person innan de förs in. Godkända förslag följer med i releasens paket som Provenance.</p>
+{% if not proposals %}<div class="panel muted">Inga förslag.</div>{% endif %}
+<table>
+  <tr><th>Status</th><th>Begrepp</th><th>Ändring</th><th>Motivering</th><th>Av</th><th>Granskning</th></tr>
+  {% for p in proposals %}
+  <tr>
+    <td><span class="badge {{ {'öppen': 'warn', 'godkänd': 'ok', 'avvisad': 'muted', 'inaktuell': 'bad'}[p.status] }}">{{ p.status }}</span></td>
+    <td class="mono small"><a href="/p/{{ project.id }}/s/{{ quote(p.sheet) }}{% if p.code %}/c/{{ quote(p.code) }}{% endif %}">{{ p.sheet }}/{{ p.code or 'nytt' }}</a><br>{{ {'update': 'ändring', 'create': 'nytt begrepp', 'retire': 'avveckling', 'replace-code': 'byte av kod'}[p.action] }}</td>
+    <td class="small">
+      {% for k, v in p.changes.items() %}<div><b>{{ k }}</b>: <span class="diff-del">{{ p.before.get(k) if p.before.get(k) is not none else '–' }}</span> → <span class="diff-add">{{ v if v is not none else '–' }}</span></div>{% endfor %}
+      {% if p.action == 'retire' %}<div>avveckla{% if p.extra.replaced_by %}, ersätts av <b>{{ p.extra.replaced_by }}</b> ({{ RELATIONS[p.extra.relation][0] }}){% endif %}</div>{% endif %}
+    </td>
+    <td class="small">{{ p.rationale }}</td>
+    <td class="small">{% if p.origin == 'ai' %}<span class="badge">AI</span> {{ p.provenance.model if p.provenance }}<br>startad av {{ p.author }}{% else %}{{ p.author }}{% endif %}<br><span class="muted">{{ p.created[:16].replace('T', ' ') }}</span></td>
+    <td class="small">
+      {% if p.status == 'öppen' %}
+      <form method="post" action="/p/{{ project.id }}/proposals/{{ p.id }}/accept" class="inline">
+        <input type="text" name="comment" placeholder="Kommentar" style="max-width:160px">
+        <button type="submit">Godkänn</button></form>
+      <form method="post" action="/p/{{ project.id }}/proposals/{{ p.id }}/reject" class="inline">
+        <button type="submit" class="secondary">Avvisa</button></form>
+      {% else %}{{ p.reviewer }} {{ (p.reviewed or '')[:16].replace('T', ' ') }}{% if p.review_comment %}<br><span class="muted">{{ p.review_comment }}</span>{% endif %}{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

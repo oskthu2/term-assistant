@@ -43,6 +43,37 @@ class Question(BaseModel):
     note: str = ""
 
 
+class Flag(BaseModel):
+    """En kod i ett urval som behöver hanteras (inaktiv, okänd, ersatt …)."""
+
+    status: str
+    message: str = ""
+    server_display: str | None = None
+    suggestions: list[dict[str, Any]] = []   # [{code, display, source}]
+    checked: str = Field(default_factory=lambda: now())
+
+
+class Proposal(BaseModel):
+    """Ett steg i den redaktionella kedjan: förslag -> granskning -> införd/avvisad."""
+
+    id: str
+    sheet: str
+    code: str | None = None
+    action: Literal["update", "create", "retire", "replace-code"] = "update"
+    changes: dict[str, Any] = {}
+    before: dict[str, Any] = {}
+    extra: dict[str, Any] = {}
+    author: str
+    origin: Literal["manuell", "ai"] = "manuell"
+    rationale: str = ""
+    provenance: dict[str, Any] | None = None
+    status: Literal["öppen", "godkänd", "avvisad", "inaktuell"] = "öppen"
+    created: str = Field(default_factory=lambda: now())
+    reviewer: str | None = None
+    reviewed: str | None = None
+    review_comment: str = ""
+
+
 class Project(BaseModel):
     id: str
     title: str
@@ -51,6 +82,7 @@ class Project(BaseModel):
     source_file: str | None = None
     template: ImportTemplate
     questions: list[Question] = []
+    flags: dict[str, dict[str, Flag]] = Field(default_factory=dict, description="Blad -> kod -> flagga")
 
 
 class Release(BaseModel):
@@ -65,6 +97,7 @@ class Release(BaseModel):
     based_on: str | None = None
     codes: dict[str, list[str]] = Field(default_factory=dict, description="Blad -> koder i releasen")
     published: str | None = None
+    hl7_validation: dict[str, Any] | None = None
     publish_log: list[str] = []
 
 
@@ -153,6 +186,19 @@ class Workspace:
                                                       ensure_ascii=False, indent=1, default=str))
         if action:
             self.log(project.id, author, action, detail)
+
+    # -- redaktionella förslag ------------------------------------------------------
+
+    def proposals(self, pid: str) -> list[Proposal]:
+        path = self._pdir(pid) / "proposals.json"
+        if not path.exists():
+            return []
+        return [Proposal.model_validate(p) for p in json.loads(path.read_text(encoding="utf-8"))]
+
+    def save_proposals(self, pid: str, proposals: list[Proposal]) -> None:
+        _atomic_write(self._pdir(pid) / "proposals.json",
+                      json.dumps([p.model_dump(exclude_none=True) for p in proposals], ensure_ascii=False,
+                                 indent=1, default=str))
 
     # -- logg ---------------------------------------------------------------------
 

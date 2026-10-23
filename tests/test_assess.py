@@ -71,18 +71,19 @@ def test_lab_plan_builds_grouped_valuesets(lab):
     assert tpl.kind == "valueset"
     assert {c.source_column: c.role for c in tpl.columns} == {
         "Kortnamn": ColumnRole.DISPLAY, "Kod": ColumnRole.CODE, "Kategori": ColumnRole.GROUP}
-    assert any("swe-npu" in p for p in tpl.validate_template())  # URL för SWE-koder saknas
-    tpl.external_systems["swe-npu"] = "http://example.org/fhir/CodeSystem/swe"
+    assert tpl.validate_template() == []
+    # SWE-koderna ingår i NPU-kodsystemet (som i Ineras NPU-lista).
+    assert tpl.external_systems == {"npu": "http://npu-terminology.org", "swe-npu": "http://npu-terminology.org"}
     resources, warnings = build_all(tpl, sheets)
     assert resources[0]["url"] == f"{BASE}/ValueSet/Grupperad"
     groups = {r["title"].split(" – ")[-1] for r in resources[1:]}
     assert groups == {"Övrigt", "Hematologi", "Kemiska rutinanalyser", "Koagulation", "Urinanalyser"}
     systems = {inc["system"] for inc in resources[0]["compose"]["include"]}
-    assert systems == {"http://npu-terminology.org", "http://example.org/fhir/CodeSystem/swe"}
+    assert systems == {"http://npu-terminology.org"}
+    assert any(c["code"] == "SWE05003" for c in resources[0]["compose"]["include"][0]["concept"])
     first = plan.proposals[0]
     assert any("NPU1059" in q for q in first.questions)
     tpl0 = first.template
-    tpl0.external_systems["swe-npu"] = "http://example.org/fhir/CodeSystem/swe"
     _, warnings0 = build_all(tpl0, sheets)
     assert any("NPU1059" in w and "utelämnad" in w for w in warnings0)
 

@@ -34,22 +34,66 @@
   {% endfor %}
   {% if ns.group %}</fieldset>{% endif %}
   <datalist id="codes">{% for p in parents %}<option value="{{ p }}">{% endfor %}</datalist>
+  {% if settings.editorial.review_manual_edits %}
+  <label for="rationale">Motivering (ändringen granskas innan den förs in)</label>
+  <input type="text" id="rationale" name="rationale">
+  {% endif %}
   <div class="actions">
-    <button type="submit">{{ 'Lägg till' if is_new else 'Spara' }}</button>
+    <button type="submit">{{ ('Föreslå' if settings.editorial.review_manual_edits else ('Lägg till' if is_new else 'Spara')) }}</button>
     <a href="/p/{{ project.id }}/s/{{ quote(sheet) }}">Avbryt</a>
   </div>
 </form>
-{% if not is_new %}
+{% if flag %}
+<div class="panel">
+  <h3>Behöver hanteras: <span class="badge bad">{{ flag.status }}</span></h3>
+  <p class="small">{{ flag.message }}{% if flag.server_display %} · namn i kodsystemet: {{ flag.server_display }}{% endif %}
+    <span class="muted">(kontrollerad {{ flag.checked[:16].replace('T', ' ') }})</span></p>
+  {% for s in flag.suggestions %}
+  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/replace" class="actions">
+    <input type="hidden" name="new_code" value="{{ s.code }}"><input type="hidden" name="display" value="{{ s.display or '' }}">
+    <input type="hidden" name="source" value="{{ s.source }}">
+    <button type="submit">Ersätt med {{ s.code }}</button> <span class="small muted">{{ s.display or '' }} · {{ s.source }}</span>
+  </form>
+  {% endfor %}
+  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/replace" class="actions">
+    <input type="text" name="new_code" placeholder="Annan kod" style="max-width:200px" required>
+    <input type="hidden" name="source" value="manuellt">
+    <button type="submit" class="secondary">Ersätt med angiven kod</button>
+  </form>
+</div>
+{% endif %}
+{% if proposals %}
+<div class="panel small"><h3>Förslag för begreppet</h3>
+  {% for p in proposals %}<div><span class="badge {{ 'warn' if p.status == 'öppen' else 'muted' }}">{{ p.status }}</span> {{ p.origin }} · {{ p.author }} ·
+    {% for k, v in p.changes.items() %}{{ k }} → {{ v }}{% if not loop.last %}, {% endif %}{% endfor %} {{ p.rationale }}</div>{% endfor %}
+  <a href="/p/{{ project.id }}/proposals">Till granskningen</a></div>
+{% endif %}
+{% if not is_new and tpl.kind == 'codesystem' %}
 <div class="panel">
   <h3>Avveckla eller ta bort</h3>
-  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/retire" class="inline">
-    <button type="submit" class="secondary">Markera som inaktiv</button>
+  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/retire">
+    <div class="formgrid">
+      <div><label>Ersätts av (valfritt)</label><input type="text" name="replaced_by" list="codes" placeholder="kod i samma kodverk"></div>
+      <div><label>Relation till ersättaren</label><select name="relation">
+        {% for key, rel in RELATIONS.items() %}<option value="{{ key }}">{{ rel[0] }}</option>{% endfor %}</select></div>
+      <div><label>Kommentar</label><input type="text" name="comment" placeholder="t.ex. sammanslagen med …"></div>
+    </div>
+    <div class="actions"><button type="submit" class="secondary">Avveckla (markera som inaktiv)</button>
+      <span class="small muted">Ersättningen hamnar som egenskapen replacedBy och i releasens ConceptMap.</span></div>
   </form>
   {% if deletable %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/delete" class="inline"
         onsubmit="return confirm('Ta bort begreppet helt?')">
     <button type="submit" class="danger">Ta bort</button>
   </form>
+  {% else %}<p class="small muted">{{ delete_reason }}</p>{% endif %}
+</div>
+{% elif not is_new %}
+<div class="panel">
+  <h3>Ta bort ur urvalet</h3>
+  {% if deletable %}
+  <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/delete" class="inline"
+        onsubmit="return confirm('Ta bort koden ur urvalet?')"><button type="submit" class="danger">Ta bort</button></form>
   {% else %}<p class="small muted">{{ delete_reason }}</p>{% endif %}
 </div>
 {% endif %}

@@ -80,9 +80,10 @@ def _valueset(url: str, name: str, title: str, concepts: dict[tuple[str, str], s
         "name": _fhir_name(name),
         "title": title,
         "status": "draft",
+        "experimental": False,
         "date": date.today().isoformat(),
         "publisher": meta.publisher,
-        "description": meta.description,
+        "description": meta.description or f"Urval: {title}.",
         "language": meta.language,
         "compose": {"include": [{"system": s, "concept": c} for s, c in includes.items()]},
     }

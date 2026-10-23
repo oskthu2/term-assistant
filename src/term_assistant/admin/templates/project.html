@@ -23,6 +23,12 @@
     <div>Senaste release: {% if rel %}<a class="mono" href="/p/{{ project.id }}/releases/{{ rel.version }}">{{ rel.version }}</a>{% else %}<span class="muted">ingen</span>{% endif %}</div>
     <div>Senaste kandidat: {% if rc %}<a class="mono" href="/p/{{ project.id }}/releases/{{ rc.version }}">{{ rc.version }}</a>{% else %}<span class="muted">ingen</span>{% endif %}</div>
     <div>Öppna frågor: <a href="#fragor">{{ open_q | length }}</a></div>
+    {% if tpl.kind == 'valueset' %}
+    <form method="post" action="/p/{{ project.id }}/check" class="actions">
+      <button type="submit">Kontrollera urvalet</button>
+      <span class="small muted">Flaggar inaktiva, okända och ersatta koder (lokala kodverk + terminologitjänsten).</span>
+    </form>
+    {% endif %}
     <div class="actions">
       <a class="button secondary" href="/p/{{ project.id }}/preview.json">Arbetskopia (FHIR)</a>
       <a class="button secondary" href="/p/{{ project.id }}/template.json">Mall (JSON)</a>
@@ -60,7 +66,14 @@
     <div><label>Titel</label><input type="text" name="cs_title" value="{{ tpl.codesystem.title or '' }}"></div>
     <div><label>Utgivare</label><input type="text" name="cs_publisher" value="{{ tpl.codesystem.publisher or '' }}"></div>
     <div><label>Språk</label><input type="text" name="cs_language" value="{{ tpl.codesystem.language }}"></div>
+    <div><label>Namnrymd</label><select name="namespace">
+      {% for ns in settings.namespaces %}<option value="{{ ns.key }}" {{ 'selected' if ns.key == tpl.namespace }}>{{ ns.label }}</option>{% endfor %}
+      <option value="" {{ 'selected' if not tpl.namespace }}>Egen (ingen kontroll)</option></select></div>
+    <div><label>Informationsklass</label><select name="classification">
+      {% for c in settings.classifications %}<option value="{{ c.key }}" {{ 'selected' if c.key == settings.classification(tpl.classification).key }}>{{ c.label }}</option>{% endfor %}</select></div>
   </div>
+  <label>Licensvillkor (följer med i paketet)</label>
+  <textarea name="license_note" placeholder="t.ex. SNOMED CT – nationell licens, får spridas inom Sverige">{{ tpl.license_note or '' }}</textarea>
   <label>Beskrivning</label><textarea name="cs_description">{{ tpl.codesystem.description or '' }}</textarea>
   <label>Syfte</label><textarea name="cs_purpose">{{ tpl.codesystem.purpose or '' }}</textarea>
   {% if tpl.source.sheets | length > 1 %}
@@ -76,6 +89,9 @@
     {% endfor %}
   </table>
   {% endif %}
+  {% set ns = settings.namespace(tpl.namespace) %}
+  {% if ns and ns.oid_root %}<p class="small">OID-rot: <span class="mono">{{ ns.oid_root }}</span>{% if ns.require_oid %} (OID krävs){% endif %}
+    <button type="submit" formaction="/p/{{ project.id }}/oids" class="secondary">Tilldela OID där det saknas</button></p>{% endif %}
   {% if tpl.external_systems %}
   <h3>Externa kodsystem</h3>
   {% for key, url in tpl.external_systems.items() %}

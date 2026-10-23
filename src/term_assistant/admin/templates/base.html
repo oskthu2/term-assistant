@@ -11,7 +11,8 @@
   <a class="brand" href="/">Kodverksadministration</a>
   <a href="/">Projekt</a>
   <a href="/import">Ny inläsning</a>
-  <span class="user">Terminologitjänst: <span class="mono">{{ tx_url() }}</span> · {{ user }}</span>
+  <a href="/settings">Inställningar</a>
+  <span class="user">FHIR {{ fhir_version() }} · <span class="mono">{{ tx_url() }}</span> · {{ user }}</span>
 </header>
 <main>
   {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}

@@ -69,9 +69,11 @@ SYSTEMS: list[ExternalSystem] = [
     ExternalSystem("npu", "NPU (Nomenclature for Properties and Units)", "http://npu-terminology.org",
                    re.compile(r"^NPU\d{5}$"), re.compile(r"^NPU\s*\d+$", re.I), expected="NPU + 5 siffror",
                    search_terms=("NPU",)),
-    ExternalSystem("swe-npu", "Svenska NPU-tillägg (SWE-koder)", None,
+    # I Ineras NPU-lista (Ontoserver) ingår SWE-koderna i samma kodsystem som NPU. Den internationella
+    # NPU-versionen på tx-nordics saknar dem, så valideringen beror på vilken version servern har.
+    ExternalSystem("swe-npu", "Svenska NPU-tillägg (SWE-koder)", "http://npu-terminology.org",
                    re.compile(r"^SWE\d{5}$"), re.compile(r"^SWE\s*\d+$", re.I), expected="SWE + 5 siffror",
-                   search_terms=("NPU", "SWE"), verified=False),
+                   search_terms=("NPU",)),
     ExternalSystem("loinc", "LOINC", "http://loinc.org", re.compile(r"^\d{1,7}-\d$"),
                    check=loinc_ok, expected="siffror-kontrollsiffra"),
     ExternalSystem("snomed", "SNOMED CT", "http://snomed.info/sct", re.compile(r"^\d{6,18}$"),
