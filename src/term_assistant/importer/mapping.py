@@ -33,6 +33,12 @@ class ColumnRole(str, Enum):
     CONTEXT = "context"          # Markeringskolumn (x) under en grupprubrik, t.ex. "Används av"
     DERIVED = "derived"          # Värdet kan härledas ur koden, t.ex. "KV_X.{code}.RBK"
     GROUP = "group"              # Gruppering i ett urval -> ett ValueSet per grupp
+    # Värdemängdsdefinition (en rad = ett urvalssteg i ValueSet.compose)
+    SYSTEM = "system"            # Kodsystem per rad -> compose.include.system
+    SYSTEM_VERSION = "system_version"  # Kodsystemets version -> compose.include.version
+    INCLUDE = "include"          # Inkludera/exkludera -> compose.include / compose.exclude
+    RULE = "rule"                # Exakt kod, med/utan underordnade eller ECL -> concept eller filter
+    COMMENT = "comment"          # Kommentar/källa -> tillägget valueset-concept-comments
     IGNORE = "ignore"            # Läses inte in
 
 
@@ -190,6 +196,8 @@ class ImportTemplate(BaseModel):
     namespace: str | None = Field(None, description="Nyckel för vald namnrymd (URL-mönster, OID-rot)")
     classification: str | None = Field(None, description="Informationsklass, t.ex. 'öppen' eller 'intern'")
     license_note: str | None = Field(None, description="Licensvillkor som följer med paketet")
+    snomed_module: str | None = Field(None, description="SNOMED CT-utgåva (modul-id) för versioner angivna som "
+                                                        "datum, t.ex. 45991000052106 (Sverige)")
 
     def column(self, role: ColumnRole) -> ColumnMapping | None:
         return next((c for c in self.columns if c.role == role), None)

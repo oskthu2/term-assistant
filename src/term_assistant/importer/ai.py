@@ -42,6 +42,16 @@ ett heuristiskt förslag. Bestäm för varje kolumn vilken roll den har:
   med {codesystem} och {code}.
 - group: i ett urval ur ett befintligt kodsystem (NPU, SNOMED CT …), kolumnen som
   delar in koderna i grupper – blir ett ValueSet per grupp.
+
+Om bladet är en värdemängdsdefinition (kodsystem anges per rad) finns dessutom:
+- system: kodsystemet för raden ("SNOMED CT", "ICD-10-SE", URL) -> compose.include.system
+- system_version: kodsystemets version/utgåva -> compose.include.version
+- include: inkludera/exkludera (Ja/Nej) -> compose.include eller compose.exclude
+- rule: urvalsregel – exakt kod, "inklusive underordnade" (<<, is-a), "endast
+  underordnade" (<, descendent-of) eller ett ECL-uttryck. Rubriker som "Regel"
+  och "Matchning" betyder oftast detta.
+- comment: kommentar eller källa per kod -> tillägget valueset-concept-comments
+I en värdemängdsdefinition ska sådana kolumner aldrig bli nya egenskaper.
 - ignore: tomma kolumner, löpnummer, interna anteckningar utan värde för kodverket
 
 Målet är att konvergera mot ett litet antal egenskaper som återanvänds mellan
@@ -123,6 +133,7 @@ def refine_with_claude(
     # Behåll det som kommer från resten av arbetsboken (katalog, historik, policy, textkatalog).
     template.history, template.policy, template.text_catalogue = old.history, old.policy, old.text_catalogue
     template.codesystem.version = old.codesystem.version
+    template.snomed_module = old.snomed_module
     keys = {g.key for g in template.generated_codesystems}
     template.generated_codesystems += [g for g in old.generated_codesystems if g.key not in keys]
     return proposal.model_copy(update={

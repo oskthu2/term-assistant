@@ -165,11 +165,14 @@ def test_retire_with_replacement_gives_conceptmap(family_project, monkeypatch):
     cs = resources[0]
     telefon = next(c for c in cs["concept"] if c["code"] == "TELEFON")
     props = {p["code"]: p for p in telefon["property"]}
-    assert props["inactive"]["valueBoolean"] is True and props["replacedBy"]["valueCode"] == "UNDERSOKNING"
+    assert props["inactive"]["valueBoolean"] is True
     assert props["status"]["valueCode"] == "retired" and "valueDateTime" in props["retirementDate"]
+    # Ersättaren som standardtillägget codesystem-replacedby (HL7 extensions-paketet), inte lokal egenskap.
+    assert telefon["extension"] == [{"url": "http://hl7.org/fhir/StructureDefinition/codesystem-replacedby",
+                                     "valueCoding": {"system": cs["url"], "code": "UNDERSOKNING"}}]
     declared = {p["code"]: p.get("uri") for p in cs["property"]}
     assert declared["status"] == "http://hl7.org/fhir/concept-properties#status"
-    assert declared["replacedBy"] is None  # ingen standard-URI finns, varken i R4, R5 eller THO
+    assert "replacedBy" not in declared
     cm = next(r for r in resources if r["resourceType"] == "ConceptMap")
     assert cm["url"] == f"{BASE}/ConceptMap/KV_EX_ERSATTNINGAR"
     target = cm["group"][0]["element"][0]["target"][0]
@@ -446,3 +449,39 @@ def test_dev_user_switch(tmp_path, monkeypatch):
     assert '<option selected>bertil</option>' in client.get("/").text
     monkeypatch.delenv("TERM_DEV_USERS")
     assert "testläge" not in client.get("/").text and "okänd" in client.get("/").text
+
+
+def test_choose_targets_before_import_and_registry_learns(tmp_path):
+    from openpyxl import Workbook
+    root = tmp_path / "ws"
+    Workspace(root)
+    _settings().save(root)
+    client = TestClient(create_app(root), follow_redirects=True)
+    wb = Workbook()
+    ws_ = wb.active
+    ws_.title = "Orsak"
+    ws_.append(["Kod", "Benämning", "Notis", "Ansvar"])
+    for i in range(6):
+        ws_.append([f"K{i}", f"Orsak {i}", f"text {i}", "Enhet A" if i % 2 else "Enhet B"])
+    path = tmp_path / "orsak.xlsx"
+    wb.save(path)
+    r = client.post("/import", files={"file": ("orsak.xlsx", path.read_bytes())}, data={"namespace": "ex"})
+    page = r.text
+    assert 'name="col_2"' in page and 'value="prop:comment"' in page and "Exempel" in page
+    uid = r.url.path.rsplit("/", 1)[1]
+    # Notis -> befintliga egenskapen comment, Ansvar -> ignoreras
+    r = client.post(f"/import/{uid}/create/0", data={"title": "Orsak", "col_0": "role:code", "col_1": "role:display",
+                                                     "col_2": "prop:comment", "col_3": "role:ignore"})
+    pid = r.url.path.rsplit("/", 1)[1]
+    project = Workspace(root).get(pid)
+    roles = {c.source_column: (c.role.value, c.property_code) for c in project.template.columns}
+    assert roles["Notis"] == ("property", "comment") and roles["Ansvar"][0] == "ignore"
+    # Registret har lärt sig att "Notis" betyder comment – nästa inläsning gissar rätt.
+    reg = PropertyRegistry.load(root / "registry.json")
+    assert "notis" in reg.get("comment").aliases
+    r = client.post("/import", files={"file": ("orsak.xlsx", path.read_bytes())}, data={"namespace": "ex"})
+    assert re.search(r'<option value="prop:comment" selected>', r.text)
+    # Ogiltiga val (två kodkolumner) ger fel och sidan visas igen.
+    uid = r.url.path.rsplit("/", 1)[1]
+    r = client.post(f"/import/{uid}/create/0", data={"col_0": "role:code", "col_1": "role:code"})
+    assert r.status_code == 400 and "exakt en kodkolumn" in r.text

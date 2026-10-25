@@ -7,6 +7,7 @@ from typing import Any
 
 from .mapping import ColumnRole, GeneratedCodeSystem, ImportTemplate, PropertyDefinition, SheetSource
 from .profiling import MARKERS
+from .replacements import REPLACED_BY, REPLACED_BY_EXT
 
 _TRUE = {"ja", "j", "yes", "y", "true", "sant", "1"} | MARKERS
 _FALSE = {"nej", "n", "no", "false", "falskt", "0", ""}
@@ -34,6 +35,7 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
     warnings: list[str] = []
     concepts: list[dict[str, Any]] = []
     seen: set[str] = set()
+    cs_url = sheet.url if sheet and sheet.url else meta.url
 
     for line, row in enumerate(rows, start=template.source.header_row + 1):
         raw_code = row.get(code_col)
@@ -86,6 +88,10 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
                     if text:
                         concept.setdefault("designation", []).append(
                             {"language": meta.language, "use": coding, "value": str(text).strip()})
+            elif col.role == ColumnRole.PROPERTY and col.property_code == REPLACED_BY:
+                # Standardtillägget codesystem-replacedby (R4/R5) i stället för en lokal egenskap.
+                concept.setdefault("extension", []).append(
+                    {"url": REPLACED_BY_EXT, "valueCoding": {"system": cs_url, "code": str(value).strip()}})
             elif col.role == ColumnRole.PROPERTY:
                 definition = props[col.property_code]
                 try:
@@ -101,7 +107,7 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
             if prop["code"] == "parent" and prop["valueCode"] not in seen:
                 warnings.append(f"Kod '{concept['code']}': förälder '{prop['valueCode']}' finns inte i kodverket")
 
-    properties = [_property_resource(p) for p in template.properties]
+    properties = [_property_resource(p) for p in template.properties if p.code != REPLACED_BY]
     for gen in template.generated_codesystems:
         if any(c.role == ColumnRole.CONTEXT and c.context.mode == "property" and c.context.codesystem == gen.key
                for c in template.columns):
@@ -157,14 +163,20 @@ def generated_codesystem(gen: GeneratedCodeSystem, template: ImportTemplate) -> 
     }
 
 
+def _ascii(name: str) -> str:
+    """'Hjärtfrekvens' -> 'Hjartfrekvens' (å, ä, ö och andra diakritiska tecken translittereras)."""
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKD", name) if not unicodedata.combining(ch))
+
+
 def _resource_id(name: str) -> str:
     """FHIR-id: [A-Za-z0-9-.]{1,64}."""
-    return "".join(ch if ch.isalnum() and ch.isascii() or ch in "-." else "-" for ch in name)[:64].strip("-")
+    return "".join(ch if ch.isalnum() and ch.isascii() or ch in "-." else "-" for ch in _ascii(name))[:64].strip("-")
 
 
 def _fhir_name(name: str) -> str:
     """CodeSystem.name ska vara maskinläsbart: inled med versal, bara [A-Za-z0-9_]."""
-    cleaned = "".join(ch if ch.isascii() and (ch.isalnum() or ch == "_") else "_" for ch in name)
+    cleaned = "".join(ch if ch.isascii() and (ch.isalnum() or ch == "_") else "_" for ch in _ascii(name))
     return cleaned[:1].upper() + cleaned[1:] if cleaned else "CodeSystem"
 
 

@@ -136,8 +136,13 @@ def _codesystem(r, err, warn) -> None:
             present = [k for k in p if k.startswith("value")]
             if expected and present and present[0] != expected:
                 err(f"{path}.property[{pcode}]", f"värdet är {present[0]}, men egenskapen har typen {declared[pcode]}")
-            if pcode in ("parent", "replacedBy") and p.get("valueCode") and p["valueCode"] not in codes:
+            if pcode == "parent" and p.get("valueCode") and p["valueCode"] not in codes:
                 err(f"{path}.property[{pcode}]", f"'{p['valueCode']}' finns inte i kodverket")
+        for ext in c.get("extension", []):
+            if ext.get("url") == "http://hl7.org/fhir/StructureDefinition/codesystem-replacedby":
+                target = ext.get("valueCoding", {})
+                if target.get("system") == r.get("url") and target.get("code") not in codes:
+                    err(f"{path}.extension[replacedby]", f"'{target.get('code')}' finns inte i kodverket")
         for d in c.get("designation", []):
             if not d.get("value"):
                 err(f"{path}.designation", "saknar value")
@@ -162,6 +167,12 @@ def _valueset(r, err, warn) -> None:
             err(f"compose.include[{i}]", "måste ha system eller valueSet")
         if inc.get("system", "").startswith("urn:term-assistant:unresolved"):
             err(f"compose.include[{i}].system", "kodsystemets canonical URL är inte angiven")
+        if inc.get("system") == "http://snomed.info/sct" and inc.get("version") and not re.match(
+                r"^http://snomed\.info/(x?sct)/\d+(/version/\d{8})?$", inc["version"]):
+            err(f"compose.include[{i}].version", f"SNOMED CT-versionen '{inc['version']}' ska vara en utgåve-URI, "
+                "t.ex. http://snomed.info/sct/45991000052106/version/20250531")
+        if inc.get("concept") and inc.get("filter"):
+            err(f"compose.include[{i}]", "får inte ha både concept och filter")
         codes = [c.get("code") for c in inc.get("concept", [])]
         dups = {c for c in codes if codes.count(c) > 1}
         if dups:

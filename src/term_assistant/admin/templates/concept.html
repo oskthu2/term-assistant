@@ -79,7 +79,7 @@
       <div><label>Kommentar</label><input type="text" name="comment" placeholder="t.ex. sammanslagen med …"></div>
     </div>
     <div class="actions"><button type="submit" class="secondary">Avveckla (markera som inaktiv)</button>
-      <span class="small muted">Ersättningen hamnar som egenskapen replacedBy och i releasens ConceptMap.</span></div>
+      <span class="small muted">Ersättningen hamnar som tillägget codesystem-replacedby på begreppet och i releasens ConceptMap.</span></div>
   </form>
   {% if deletable %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/delete" class="inline"

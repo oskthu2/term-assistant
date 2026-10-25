@@ -30,7 +30,7 @@ from ..importer.mapping import (
 from ..importer.registry import PropertyRegistry
 from ..importer.package import build_package, label_resources, package_manifest
 from ..importer.release import bump, check_policy, diff, release as to_release
-from ..importer.replacements import RELATIONS, REPLACED_BY, replacement_conceptmap
+from ..importer.replacements import RELATIONS, REPLACED_BY, REPLACED_BY_EXT, replacement_conceptmap
 from ..importer.suggest import MappingProposal, to_constant, to_property_code
 from ..importer.transform import _TRUE, coerce
 from ..importer.validate import validate_resources
@@ -48,11 +48,17 @@ ROLE_LABELS = {
     ColumnRole.CONTEXT: "Användningskontext (kryss)",
     ColumnRole.DERIVED: "Härledd ur koden",
     ColumnRole.GROUP: "Grupp (ett ValueSet per grupp)",
+    ColumnRole.SYSTEM: "Kodsystem (per rad)",
+    ColumnRole.SYSTEM_VERSION: "Kodsystemets version",
+    ColumnRole.INCLUDE: "Inkludera/exkludera",
+    ColumnRole.RULE: "Urvalsregel (exakt, underordnade, ECL)",
+    ColumnRole.COMMENT: "Kommentar/källa",
     ColumnRole.IGNORE: "Ignoreras",
 }
 CS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.DEFINITION, ColumnRole.DESIGNATION, ColumnRole.PROPERTY,
             ColumnRole.PARENT, ColumnRole.CONTEXT, ColumnRole.DERIVED, ColumnRole.IGNORE]
-VS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.GROUP, ColumnRole.IGNORE]
+VS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.SYSTEM, ColumnRole.SYSTEM_VERSION, ColumnRole.INCLUDE,
+            ColumnRole.RULE, ColumnRole.COMMENT, ColumnRole.GROUP, ColumnRole.IGNORE]
 PROPERTY_TYPES = ["string", "code", "boolean", "integer", "decimal", "dateTime", "Coding"]
 _CODE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_\-]*$")
 
@@ -261,12 +267,96 @@ def _default_widget(role: ColumnRole, definition: PropertyDefinition | None) -> 
         return "checkbox"
     if role == ColumnRole.PARENT:
         return "concept-picker"
-    if role in (ColumnRole.DEFINITION,):
+    if role in (ColumnRole.DEFINITION, ColumnRole.COMMENT):
         return "textarea"
     if definition:
         return {"boolean": "checkbox", "dateTime": "date", "integer": "number", "decimal": "number"}.get(
             definition.type, "text")
     return "text"
+
+
+# -- vallista för kolumnens mål (vid inläsning) ---------------------------------------------------
+
+
+def target_options(tpl: ImportTemplate, registry: PropertyRegistry) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Grupperad vallista över vad en kolumn kan stå för: [(grupp, [(värde, etikett)])]."""
+    if tpl.kind == "valueset":
+        return [
+            ("Begrepp", [("role:code", "Kod"), ("role:display", "Benämning (display)")]),
+            ("Värdemängd", [(f"role:{r.value}", ROLE_LABELS[r]) for r in
+                            (ColumnRole.SYSTEM, ColumnRole.SYSTEM_VERSION, ColumnRole.INCLUDE, ColumnRole.RULE,
+                             ColumnRole.COMMENT, ColumnRole.GROUP)]),
+            ("Övrigt", [("role:ignore", "Ignoreras")]),
+        ]
+    props = [(f"prop:{p.code}", f"{p.code} ({p.type}){' – ' + p.description if p.description and p.description != p.code else ''}")
+             for p in property_choices(tpl, registry)]
+    desig = [(f"desig:use:{e.designation.use_code}", f"{e.designation.use_display}") for e in registry.entries
+             if e.kind == "designation" and e.designation]
+    desig += [("desig:lang:en", "Översättning (engelska)"), ("desig:lang:sv", "Synonym/variant (svenska, utan typ)")]
+    return [
+        ("Begrepp", [("role:code", "Kod"), ("role:display", "Benämning (display)"),
+                     ("role:definition", "Definition"), ("role:parent", "Överordnad kod")]),
+        ("Egenskap", props + [("prop:__new__", "+ Ny egenskap (kod från rubriken)")]),
+        ("Designation", desig),
+        ("Övrigt", [("role:ignore", "Ignoreras")]),
+    ]
+
+
+def learn_from_template(tpl: ImportTemplate, registry: PropertyRegistry) -> list[str]:
+    """Registret lär sig de bekräftade mappningarna (rubrik -> egenskap/designation-typ) – konvergens."""
+    learned = []
+    for col in tpl.columns:
+        if col.role == ColumnRole.PROPERTY and col.property_code and col.property_code != "parent":
+            if registry.get(col.property_code) is None:
+                definition = next((p for p in tpl.properties if p.code == col.property_code), None)
+                if definition:
+                    registry.add_property(definition, aliases=[col.source_column])
+            registry.learn(col.source_column, col.property_code)
+            learned.append(f"{col.source_column} -> {col.property_code}")
+        elif col.role == ColumnRole.DESIGNATION and col.designation and col.designation.use_code:
+            entry = next((e for e in registry.entries if e.designation
+                          and e.designation.use_code == col.designation.use_code), None)
+            if entry:
+                registry.learn(col.source_column, entry.key)
+                learned.append(f"{col.source_column} -> {entry.key}")
+    return learned
+
+
+def current_target(col: ColumnMapping) -> str:
+    if col.role == ColumnRole.PROPERTY:
+        return f"prop:{col.property_code}"
+    if col.role == ColumnRole.DESIGNATION and col.designation:
+        if col.designation.use_code:
+            return f"desig:use:{col.designation.use_code}"
+        return f"desig:lang:{col.designation.language or 'sv'}"
+    return f"role:{col.role.value}"
+
+
+def apply_target(tpl: ImportTemplate, index: int, value: str, registry: PropertyRegistry) -> ImportTemplate:
+    """Sätt kolumnens mål från vallistan (``target_options``)."""
+    col = tpl.columns[index]
+    form: dict[str, str] = {"label": col.ui.label if col.ui else col.source_column, "visible": "on", "editable": "on"}
+    kind, _, rest = value.partition(":")
+    if kind == "role":
+        form["role"] = rest
+        if rest == ColumnRole.IGNORE.value:
+            form.pop("visible")
+    elif kind == "prop":
+        form.update(role="property", property=rest)
+        if rest == "__new__":
+            form["new_property_code"] = to_property_code(col.source_column)
+    elif kind == "desig":
+        sub, _, arg = rest.partition(":")
+        use = ""
+        if sub == "use":
+            entry = next((e for e in registry.entries if e.designation and e.designation.use_code == arg), None)
+            gen = next((f"gen:{g.key}:{arg}" for g in tpl.generated_codesystems
+                        if g.purpose == "designation-use" and any(c.code == arg for c in g.concepts)), None)
+            use = f"reg:{entry.key}" if entry else (gen or "")
+        form.update(role="designation", use=use, language=arg if sub == "lang" else tpl.codesystem.language)
+    else:
+        raise OpError(f"Okänt val '{value}'.")
+    return update_column(tpl, index, form, registry)
 
 
 def update_column(tpl: ImportTemplate, index: int, form: dict, registry: PropertyRegistry) -> ImportTemplate:
@@ -881,8 +971,10 @@ def _local_codesystems(ws: Workspace) -> dict[str, dict[str, dict]]:
             for c in r.get("concept", []):
                 props = {x["code"]: next((v for k, v in x.items() if k.startswith("value")), None)
                          for x in c.get("property", [])}
+                replaced = next((e.get("valueCoding", {}).get("code") for e in c.get("extension", [])
+                                 if e.get("url") == REPLACED_BY_EXT), None) or props.get(REPLACED_BY)
                 concepts[c["code"]] = {"display": c.get("display"), "inactive": props.get("inactive") is True,
-                                       "replacedBy": props.get(REPLACED_BY)}
+                                       "replacedBy": replaced}
             out[r["url"]] = concepts
     return out
 

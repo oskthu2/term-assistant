@@ -162,12 +162,21 @@ term-assistant build examples/lab_urval.xlsx --template lab.json --validate   # 
 term-assistant diff v1.json v2.json --template mallar.json
 ```
 
-### Tre typfall
+### Välj mål före inläsning
+
+I förslaget väljer du för varje kolumn vad den står för, med exempelvärden
+bredvid. Befintliga egenskaper står först i listan, följda av designationstyper,
+värdemängdsroller och "ny egenskap". Valen sparas i egenskapsregistret, så att
+samma rubrik gissas rätt nästa gång. Kryssa i "Låt Claude granska förslagen"
+för att få en AI-granskning av tolkningarna innan du väljer.
+
+### Typfall
 
 | Fil | Bedömning | Resultat |
 |---|---|---|
 | `lista_utan_koder.pdf` – listor med bara benämningar | **avvisad** | Minimikraven (en kod per rad, benämning, rubrikrad, ett kodverk per flik) och specifika tips: tre separata listor, lämna Excel/CSV i stället för PDF |
 | `lab_urval.xlsx` – NPU/SWE-koder i flera flikar | **godkänd med anmärkningar** | Flikarna känns igen som *urval* ur NPU och SWE-tillägg och blir ValueSet, ett per grupp ("Grupp"/"Kategori"). Den stora fliken blir referenslista. `NPU1059` flaggas som felskriven, med förslaget `NPU10599` från en annan flik där samma analys finns |
+| `vardemangdsdefinition.xlsx` – kodsystem per rad, regel, inkludera, version, källa | **godkänd med anmärkningar** (URL för ICD-10-SE ska anges) | Värdemängdsdefinition. Kolumnerna blir `compose.include/exclude`, filter (`is-a`, ECL) och kommentarstillägg i stället för nya egenskaper. SNOMED-versioner blir utgåve-URI:er |
 | `kodverk_familj.xlsx` – flikar med samma struktur | **godkänd** | En mall för hela familjen och ett CodeSystem per flik. Kryssen under "Används av" blir designations, och deras `use` pekar på ett genererat kontextkodverk. Text-ID:n som går att räkna fram ur koden blir `derived`. Katalogen ger OID och ägare, historiken ger version, och regeln "koder får inte tas bort" blir releasepolicy. Textkatalogen ger designations med textroller (RBK/HLP) |
 
 Exempel på utdata från `analyze` för ett enkelt kodverk (`examples/vardkontaktorsak.xlsx`):

@@ -62,21 +62,30 @@ Informationsklass: {{ settings.classification(choices.classification).label }}</
 <div class="panel">Inget i filen kan läsas in. Åtgärda enligt tipsen ovan och läs in filen igen.</div>
 {% endif %}
 {% for p in plan.proposals %}
-{% set t = p.template %}
-<div class="panel">
+{% set t = p.template %}{% set tg = targets[loop.index0] %}{% set pi = loop.index0 %}
+<form method="post" action="/import/{{ uid }}/create/{{ pi }}" class="panel">
   <h3>{{ t.codesystem.title or t.codesystem.name }}
     <span class="badge muted">{{ 'ValueSet' if t.kind == 'valueset' else 'CodeSystem' }}</span>
     {% if t.source.sheets | length > 1 %}<span class="badge">{{ t.source.sheets | length }} flikar</span>{% endif %}</h3>
+  <p class="small muted">Välj vad varje kolumn står för. Förslaget är förvalt; befintliga egenskaper står först i listan,
+  så att samma begrepp mappas på samma sätt i alla kodverk.</p>
   <table>
-    <tr><th>Kolumn</th><th>Tolkning</th><th>Mål</th><th>Säkerhet</th><th>Motivering</th></tr>
-    {% for c in p.choices %}
+    <tr><th>Kolumn</th><th>Exempel</th><th>Står för</th><th>Säkerhet</th><th>Motivering</th></tr>
+    {% for c in t.columns %}{% set j = loop.index0 %}
+    {% set ch = p.choices | selectattr('source_column', 'equalto', c.source_column) | first %}
     <tr>
       <td>{{ c.source_column }}</td>
-      <td>{{ ROLE_LABELS[c.role] }}</td>
-      <td class="mono small">{{ c.registry_key or c.new_property_code or c.context_group or c.pattern or c.language or '' }}
-        {% if c.new_property_code %}<span class="badge warn">ny</span>{% endif %}</td>
-      <td><span class="badge {{ 'ok' if c.confidence >= 0.85 else ('warn' if c.confidence >= 0.6 else 'bad') }}">{{ (c.confidence * 100) | round | int }} %</span></td>
-      <td class="small muted">{{ c.rationale }}</td>
+      <td class="small muted">{{ tg.samples.get(c.source_column, '') }}</td>
+      <td>
+        <select name="col_{{ j }}" aria-label="Vad kolumnen {{ c.source_column }} står för">
+          {% for group, opts in tg.options %}<optgroup label="{{ group }}">
+            {% for value, label in opts %}<option value="{{ value }}" {{ 'selected' if value == tg.current[c.source_column] }}>{{ label }}</option>{% endfor %}
+          </optgroup>{% endfor %}
+        </select>
+        {% if ch and ch.new_property_code %}<span class="badge warn" title="Ingen befintlig egenskap matchade">ny egenskap</span>{% endif %}
+      </td>
+      <td>{% if ch %}<span class="badge {{ 'ok' if ch.confidence >= 0.85 else ('warn' if ch.confidence >= 0.6 else 'bad') }}">{{ (ch.confidence * 100) | round | int }} %</span>{% endif %}</td>
+      <td class="small muted">{{ ch.rationale if ch else '' }}</td>
     </tr>
     {% endfor %}
   </table>
@@ -84,11 +93,11 @@ Informationsklass: {{ settings.classification(choices.classification).label }}</
   <p class="small">Genererat kodverk <span class="mono">{{ g.name }}</span>: {{ g.concepts | map(attribute='display') | join(', ') }}</p>
   {% endfor %}
   {% if p.questions %}<h3>Öppna frågor</h3><ul class="small">{% for q in p.questions %}<li>{{ q }}</li>{% endfor %}</ul>{% endif %}
-  <form method="post" action="/import/{{ uid }}/create/{{ loop.index0 }}" class="actions">
+  <div class="actions">
     <input type="text" name="title" value="{{ t.codesystem.title or t.codesystem.name }}" style="max-width:360px" aria-label="Projektnamn">
     <button type="submit">Skapa projekt</button>
-    <span class="small muted">Kolumnernas tolkning kan ändras i projektet efteråt.</span>
-  </form>
-</div>
+    <span class="small muted">Valen sparas i registret, så att samma rubriker gissas rätt nästa gång.</span>
+  </div>
+</form>
 {% endfor %}
 {% endblock %}

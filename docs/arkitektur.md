@@ -242,6 +242,58 @@ publicering som paket till en inläsningskatalog eller med `PUT` till en
 terminologitjänst (det senare kräver `TX_PUBLISH=1`). Allt loggas med
 användarnamnet från `X-Remote-User`.
 
+## Värdemängdsdefinitioner
+
+Många kalkylark beskriver inte ett kodverk utan *hur en värdemängd byggs*.
+Kolumnerna är då "Kodsystem", "Version", "Inkludera", "Regel"/"Matchning" och
+"Kommentar"/"Källa". Om en kolumn innehåller kodsystem per rad ("SNOMED CT",
+"ICD-10-SE", "LOINC", "NPU" eller en URL) klassas bladet som
+värdemängdsdefinition, och kolumnerna får egna roller i stället för att bli
+egenskaper:
+
+| Roll | FHIR |
+|---|---|
+| `system` | `compose.include.system`; namn översätts till canonical URL, och okända (t.ex. ICD-10-SE) blir en fråga |
+| `system_version` | `compose.include.version`; SNOMED CT-datum görs om till utgåve-URI (`http://snomed.info/sct/<modul>/version/<datum>`, förval svensk utgåva 45991000052106) |
+| `include` | Ja/Nej, Inkludera/Exkludera → `compose.include` eller `compose.exclude` |
+| `rule` | exakt kod → `concept`; "inklusive underordnade"/`<<` → filter `is-a`; "endast underordnade"/`<` → `descendent-of`; ECL-uttryck → filter `constraint` (SNOMED CT) |
+| `comment` | tillägget `valueset-concept-comments` på koden |
+
+Exakta koder samlas per kodsystem och version. Varje regel blir ett eget
+`include`, eftersom FHIR inte tillåter `concept` och `filter` i samma element,
+och flera filter i ett element betyder OCH.
+
+### Status för ett begrepp i ett ValueSet
+
+Det finns ingen aktiv internationell standard för en kods status *i sin
+koppling till en värdemängd*:
+
+* `valueset-deprecated` (kontext `ValueSet.compose.include.concept`) är
+  **avvecklat** (FMM 1) och bör inte användas i nytt innehåll.
+* `structuredefinition-standards-status` gäller kodverk och begrepp i
+  CodeSystem, inte koder i ValueSet.
+* Det som finns aktivt i ValueSet-kontext är beskrivande:
+  `valueset-concept-comments`, `valueset-concept-definition`,
+  `valueset-label` och `valueset-conceptOrder`.
+* R5 tillåter egenskaper (t.ex. status) i `expansion.contains.property`. Det
+  rör serverns expansion, inte definitionen.
+
+Det beprövade mönstret är att (1) sätta status på begreppet i kodverket,
+`inactive`/`status`, så att `$expand` med `activeOnly` filtrerar bort det, och
+(2) exkludera koden ur värdemängden, eventuellt flyttad till en separat
+"historisk" värdemängd, när den bara ska utgå ur just det urvalet. En
+förklaring kan läggas i `valueset-concept-comments`.
+
+Relevanta internationella IG:er:
+
+* **CRMI** (`hl7.fhir.uv.crmi`) täcker livscykeln för värdemängder och
+  andra artefakter: versioner, release, manifest med låsta
+  kodsystemversioner och licens.
+* **IHE SVCM** (`ihe.iti.svcm`) profilerar gränssnittet för att hämta
+  värdemängder, kodsystem och mappningar från en terminologitjänst.
+* **FHIR Terminology Ecosystem IG** (`hl7.fhir.uv.tx-ecosystem`) är
+  testsviten och verktygstilläggen för terminologiservrar.
+
 ## Identitet, klassning och paket
 
 * **Namnrymd** väljs vid inläsning (`settings.json`). Den ger bas-URL,
@@ -279,25 +331,27 @@ väntade:
 
 ## Ersatta koder och urval som behöver hanteras
 
-**Löser R5 "ersätts av"?** Nej. Kontrollerat mot de officiella paketen:
+**Hur uttrycks "ersätts av"?** Kontrollerat mot de officiella paketen:
 
-* R4 (`hl7.fhir.r4.core` 4.0.1) definierar `inactive`, `deprecated`,
-  `notSelectable`, `parent` och `child`.
+* R4 (`hl7.fhir.r4.core` 4.0.1) definierar egenskaperna `inactive`,
+  `deprecated`, `notSelectable`, `parent` och `child`.
 * R5 (`hl7.fhir.r5.core` 5.0.0) lägger till bland annat `status`,
   `effectiveDate`, `deprecationDate`, `retirementDate`, `partOf`, `synonym`,
-  `comment` och `itemWeight`. Någon egenskap för ersättning finns inte.
-* HL7:s terminologipaket (THO, `hl7.terminology.r4` 7.4.0) har inte heller
-  någon. Där används R5:s `status` även i R4-kodverk.
+  `comment` och `itemWeight`. Någon *egenskap* för ersättning finns inte.
+* HL7:s extensions-paket (`hl7.fhir.uv.extensions.r4` 5.3.0) har däremot
+  tillägget **`codesystem-replacedby`** (aktivt, FMM 3, värde Coding,
+  kontext `CodeSystem.concept`). Enligt definitionen ersätts det i R6 av
+  egenskaperna `replacedByCode`/`replacedByCoding`.
 
-Verktyget sätter därför standardegenskaperna `status = retired` och
-`retirementDate` vid avveckling, med R5:s URI:er (fungerar även i R4, som i
-THO). Ersättaren uttrycks som den lokala egenskapen `replacedBy` (synlig i
-`$lookup`) och i en ConceptMap. ConceptMap är den form som mottagande system
-kan använda maskinellt, via `$translate`. Så hanteras ersättningar även i
-SNOMED CT (historiska associationer som ConceptMap).
+Vid avveckling sätter verktyget därför `inactive = true`, `status = retired`
+och `retirementDate` (R5:s URI:er, som också används i R4-kodverk i THO). Det
+lägger också tillägget `codesystem-replacedby` på begreppet, samt en ConceptMap
+från avvecklad till ersättande kod. ConceptMap är den form som mottagande
+system kan använda maskinellt via `$translate`. Så hanteras ersättningar även
+i SNOMED CT (historiska associationer).
 
-Ett avvecklat begrepp får `inactive = true` och kan peka på en ersättare i
-samma kodverk (`replacedBy`, relation och kommentar). Releasen får då en
+Ett avvecklat begrepp kan peka på en ersättare i samma kodverk (kolumnen
+"Ersätts av", relation och kommentar). Releasen får då en
 ConceptMap från avvecklad till ersättande kod (R4: `equivalence`, R5:
 `relationship`), som mottagare kan använda med `$translate`.
 

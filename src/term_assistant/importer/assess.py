@@ -203,7 +203,17 @@ def assess_sheet(sheet: Sheet, codesystem_names: set[str]) -> SheetAssessment:
         a.tips = list(MINIMUM_REQUIREMENTS)
         return a
 
-    code, external = _code_column(profiles, sheet)
+    from .external import looks_like_system_column
+    system_col = next((p for p in profiles if looks_like_system_column(sheet.column(p.header))), None)
+    if system_col is not None:
+        # Värdemängdsdefinition: samma kod kan förekomma flera gånger (inkludera/exkludera, olika regler).
+        from .suggest import _systems_from_column
+        code = max((p for p in profiles if p.header != system_col.header and p.fill_ratio >= 0.9
+                    and (p.inferred_type in ("code", "integer") or _role_alias_score(p.header, ColumnRole.CODE))),
+                   key=lambda p: (_role_alias_score(p.header, ColumnRole.CODE), p.unique_ratio), default=None)
+        external = _systems_from_column(sheet.column(system_col.header)) if code else None
+    else:
+        code, external = _code_column(profiles, sheet)
     if code is None:
         a.reasons.append(_no_code_reason(profiles, sheet))
         a.tips = list(MINIMUM_REQUIREMENTS) + _rejection_tips(sheet, profiles)
@@ -212,7 +222,15 @@ def assess_sheet(sheet: Sheet, codesystem_names: set[str]) -> SheetAssessment:
     a.code_column, a.external = code.header, external
     display = _display_column(profiles, code)
     a.display_column = display.header if display else None
-    if external:
+    if system_col is not None:
+        a.kind = SheetKind.SUBSET
+        a.reasons.append(f"Värdemängdsdefinition: kodsystem per rad i '{system_col.header}' ("
+                         + ", ".join(f"{s.name} ({s.count})" for s in external.systems)
+                         + ") – blir ett ValueSet med include/exclude och regler.")
+        unresolved = [s.name for s in external.systems if not s.uri]
+        if unresolved:
+            a.warnings.append(f"Canonical URL saknas för {', '.join(unresolved)} – anges i projektet.")
+    elif external:
         a.kind = SheetKind.SUBSET
         a.reasons.append("Koderna kommer från " + " och ".join(f"{s.name} ({s.count})" for s in external.systems)
                          + " – bladet är ett urval ur befintliga kodsystem och blir ett ValueSet.")
@@ -224,7 +242,7 @@ def assess_sheet(sheet: Sheet, codesystem_names: set[str]) -> SheetAssessment:
 
     codes = [str(v).strip() for v in sheet.column(code.header) if v is not None]
     dups = [c for c, n in Counter(codes).items() if n > 1]
-    if dups:
+    if dups and system_col is None:
         a.warnings.append(f"{len(dups)} koder förekommer på flera rader, t.ex. {', '.join(dups[:5])}.")
     if display is None:
         a.warnings.append("Ingen kolumn med benämning hittades.")

@@ -183,3 +183,53 @@ def test_validate_valueset_codes():
     report = asyncio.run(validate_valueset_codes(Stub(), vs))
     assert report["summary"] == {"ok": 1, "invalid": 1, "inactive": 1}
     assert {p["code"] for p in report["problems"]} == {"BAD", "OLD"}
+
+
+# -- värdemängdsdefinitioner -----------------------------------------------------------------
+
+
+def test_valueset_definition_columns_are_recognised(tmp_path):
+    from make_examples import make_valueset_definition_workbook
+    from term_assistant.importer.validate import validate_resources
+
+    path = make_valueset_definition_workbook(tmp_path / "vsd.xlsx")
+    plan, sheets = plan_import(path, BASE, PropertyRegistry.default())
+    roles = [{c.source_column: c.role.value for c in p.template.columns} for p in plan.proposals]
+    assert roles[0] == {"Kod": "code", "Benämning": "display", "Kodsystem": "system", "Regel": "rule",
+                        "Inkludera": "include", "Terminologiversion": "system_version"}
+    assert roles[1] == {"Kod": "code", "Term": "display", "Kodsystem": "system", "Matchning": "rule",
+                        "Inkludera": "include", "Version": "system_version", "Källa": "comment"}
+    assert all(not p.new_properties for p in plan.proposals)
+    diabetes = plan.proposals[0].template
+    assert diabetes.kind == "valueset" and diabetes.snomed_module == "45991000052106"
+    assert any("ICD-10-SE" in q for q in plan.proposals[0].questions)
+    diabetes.external_systems["icd10se"] = "http://example.org/fhir/CodeSystem/icd-10-se"
+    diabetes.codesystem.publisher = "Exempel"
+    resources, warnings = build_all(diabetes, sheets)
+    compose = resources[0]["compose"]
+    snomed_version = "http://snomed.info/sct/45991000052106/version/20250531"
+    assert {"system": "http://snomed.info/sct", "version": snomed_version,
+            "filter": [{"property": "concept", "op": "is-a", "value": "73211009"}]} in compose["include"]
+    assert compose["exclude"] == [{"system": "http://snomed.info/sct", "version": snomed_version,
+                                   "filter": [{"property": "concept", "op": "is-a", "value": "11530004"}]}]
+    assert any(f.get("property") == "constraint" for inc in compose["include"] for f in inc.get("filter", []))
+    icd = next(inc for inc in compose["include"] if inc["system"].endswith("icd-10-se"))
+    assert [c["code"] for c in icd["concept"]] == ["E10", "E11"] and icd["version"] == "2025"
+    assert validate_resources(resources) == []
+    heart = plan.proposals[1].template
+    heart.codesystem.publisher = "Exempel"
+    resources, _ = build_all(heart, sheets)
+    assert resources[0]["id"] == "Hjartfrekvens"  # å/ä/ö translittereras
+    loinc = resources[0]["compose"]["include"][0]
+    assert loinc["concept"][0]["extension"][0] == {
+        "url": "http://hl7.org/fhir/StructureDefinition/valueset-concept-comments", "valueString": "Nationell riktlinje"}
+
+
+def test_parse_rule_and_include():
+    from term_assistant.importer.suggest import parse_include, parse_rule
+    assert parse_rule("<<") == ("is-a", None) and parse_rule("Inklusive underordnade") == ("is-a", None)
+    assert parse_rule("<") == ("descendent-of", None) and parse_rule("Endast underordnade") == ("descendent-of", None)
+    assert parse_rule("Exakt") == ("concept", None) and parse_rule(None) == ("concept", None)
+    assert parse_rule("<< 73211009 : 363698007 = 113331007")[0] == "ecl"
+    assert parse_rule("ibland")[0] == "unknown"
+    assert parse_include("Ja") and parse_include(None) and not parse_include("Nej") and not parse_include("Exkludera")

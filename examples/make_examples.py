@@ -160,6 +160,27 @@ def make_lab_workbook(path: Path) -> Path:
     return path
 
 
+def make_valueset_definition_workbook(path: Path) -> Path:
+    """Värdemängdsdefinitioner: kodsystem per rad, version, inkludera/exkludera, regel/matchning och källa."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Diabetes"
+    ws.append(["Kod", "Benämning", "Kodsystem", "Regel", "Inkludera", "Terminologiversion"])
+    ws.append(["73211009", "Diabetes mellitus", "SNOMED CT", "<<", "Ja", "20250531"])
+    ws.append(["11530004", "Brittle diabetes", "SNOMED CT", "<<", "Nej", "20250531"])
+    ws.append(["E10", "Diabetes mellitus typ 1", "ICD-10-SE", "exakt", "Ja", "2025"])
+    ws.append(["E11", "Diabetes mellitus typ 2", "ICD-10-SE", "exakt", "Ja", "2025"])
+    ws.append(["<< 73211009 : 363698007 = 113331007", "Diabetes med fynd i endokrint system", "SNOMED CT",
+               "<< 73211009 : 363698007 = 113331007", "Ja", "20250531"])
+    ws2 = wb.create_sheet("Hjärtfrekvens")
+    ws2.append(["Kod", "Term", "Kodsystem", "Matchning", "Inkludera", "Version", "Källa"])
+    ws2.append(["8867-4", "Heart rate", "LOINC", "Exakt", "Ja", "2.82", "Nationell riktlinje"])
+    ws2.append(["364075005", "Hjärtfrekvens", "SNOMED CT", "Inklusive underordnade", "Ja", "20250531", "Lokal"])
+    ws2.append(["NPU21692", "Pt—Hjärta; frekvens", "NPU", "Exakt", "Ja", "", "Labbet"])
+    wb.save(path)
+    return path
+
+
 def make_list_pdf(path: Path) -> Path:
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
@@ -184,5 +205,6 @@ def make_list_pdf(path: Path) -> Path:
 if __name__ == "__main__":
     out = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parent)
     for fn, name in [(make_simple_workbook, "vardkontaktorsak.xlsx"), (make_family_workbook, "kodverk_familj.xlsx"),
-                     (make_lab_workbook, "lab_urval.xlsx"), (make_list_pdf, "lista_utan_koder.pdf")]:
+                     (make_lab_workbook, "lab_urval.xlsx"), (make_list_pdf, "lista_utan_koder.pdf"),
+                     (make_valueset_definition_workbook, "vardemangdsdefinition.xlsx")]:
         print("Skrev", fn(out / name))

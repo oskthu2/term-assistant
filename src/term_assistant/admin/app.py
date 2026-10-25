@@ -133,7 +133,20 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             return render(request, "import.html", status=400, base_url=base_url, errors=["Välj en namnrymd."])
         uid, path = ws.save_upload(upload.filename, await upload.read())
         try:
-            plan, _ = plan_import(path, base, registry(), language=(form.get("language") or "sv").strip())
+            reg = registry()
+            plan, sheets = plan_import(path, base, reg, language=(form.get("language") or "sv").strip())
+            if form.get("ai") and plan.proposals:
+                from ..importer.ai import refine_with_claude
+                by_name = {s.name: s for s in sheets}
+                try:
+                    plan.proposals = [refine_with_claude(p, by_name[p.template.source.sheet], reg,
+                                                         p.template.codesystem,
+                                                         client=ai_client_factory() if ai_client_factory else None)
+                                      for p in plan.proposals]
+                    plan.assessment.tips.append("Förslagen är granskade av Claude (se motiveringarna).")
+                except Exception as exc:  # saknad nyckel, nätverk …
+                    plan.assessment.tips.append(f"AI-granskningen kunde inte köras ({type(exc).__name__}: {exc}); "
+                                                "förslagen bygger på heuristik.")
         except Exception as exc:  # trasig eller okänd fil: visa felet i stället för att krascha
             return render(request, "import.html", status=400, base_url=base_url,
                           errors=[f"Filen kunde inte läsas ({type(exc).__name__}: {exc}). "
@@ -154,8 +167,24 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         plan, choices = cached_plan(request.path_params["uid"])
         if plan is None:
             return not_found(request, "Inläsningen")
-        return render(request, "import_plan.html", uid=request.path_params["uid"], plan=plan,
-                      assessment=plan.assessment, choices=choices)
+        return _plan_page(request, request.path_params["uid"], plan, choices)
+
+    def _plan_page(request, uid, plan, choices, errors=None, status=200, selected=None):
+        reg = registry()
+        targets = []
+        for n, p in enumerate(plan.proposals):
+            options = ops.target_options(p.template, reg)
+            values = {v for _, opts in options for v, _ in opts}
+            current = {c.source_column: (selected or {}).get((n, j)) or ops.current_target(c)
+                       for j, c in enumerate(p.template.columns)}
+            extra = [(v, f"{c.role.value} (som föreslaget)") for c in p.template.columns
+                     for v in [ops.current_target(c)] if v not in values]
+            if extra:
+                options = options + [("Nuvarande", list(dict.fromkeys(extra)))]
+            samples = {pr.header: ", ".join(pr.samples[:3]) for pr in p.profiles}
+            targets.append({"options": options, "current": current, "samples": samples})
+        return render(request, "import_plan.html", status=status, uid=uid, plan=plan, assessment=plan.assessment,
+                      choices=choices, targets=targets, errors=errors or [])
 
     async def import_create(request: Request):
         uid, i = request.path_params["uid"], request.path_params["i"]
@@ -166,10 +195,23 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         cfg = settings()
         proposal: MappingProposal = plan.proposals[i]
         title = (form.get("title") or proposal.template.codesystem.title or proposal.template.codesystem.name).strip()
+        reg = registry()
+        selected = {}
+        try:
+            for j, col in enumerate(list(proposal.template.columns)):
+                value = form.get(f"col_{j}")
+                selected[(i, j)] = value
+                if value and value != ops.current_target(col):
+                    proposal.template = ops.apply_target(proposal.template, j, value, reg)
+        except ops.OpError as exc:
+            return _plan_page(request, uid, plan, choices, exc.messages, 400, selected)
         sheets = read_workbook(ws.upload_path(uid))
         project = ops.create_project(ws, proposal, sheets, title, author(request),
                                      namespace=cfg.namespace(choices.get("namespace")),
                                      classification=cfg.classification(choices.get("classification")).key)
+        learned = ops.learn_from_template(project.template, reg)
+        reg.save(reg_path)
+        ws.log(project.id, author(request), "Registret lärde sig mappningarna", {"alias": learned})
         return redirect(f"/p/{project.id}", "Projektet är skapat. Gå igenom de öppna frågorna.")
 
     # -- projekt ---------------------------------------------------------------------------------

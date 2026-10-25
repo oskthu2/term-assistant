@@ -2,8 +2,10 @@
 
 När ett begrepp avvecklas och ersätts av ett annat registreras det på två sätt:
 
-* på begreppet: ``inactive = true`` och egenskapen ``replacedBy`` (koden som
-  ersätter); det syns i ``$lookup``
+* på begreppet: ``inactive = true`` och standardtillägget
+  ``codesystem-replacedby`` (HL7 extensions-paketet, aktivt, FMM 3) med koden
+  som ersätter. I R6 ersätts tillägget av egenskaperna ``replacedByCode`` /
+  ``replacedByCoding``. I mallen och vyn heter kolumnen ``replacedBy``.
 * i en ConceptMap per projekt, som mottagande system kan använda med
   ``$translate`` för att migrera sina data automatiskt
 
@@ -17,6 +19,7 @@ from datetime import date
 from typing import Any
 
 REPLACED_BY = "replacedBy"
+REPLACED_BY_EXT = "http://hl7.org/fhir/StructureDefinition/codesystem-replacedby"
 
 # Relationen mellan avvecklad och ersättande kod, och hur den uttrycks i R4/R5.
 RELATIONS = {

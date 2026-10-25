@@ -169,3 +169,50 @@ async def resolve_system_uris(client, keys: list[str]) -> dict[str, list[dict]]:
                     hits[cs["url"]] = {k: cs.get(k) for k in ("url", "title", "version")}
         found[key] = list(hits.values())
     return found
+
+
+# -- kodsystem angivna med namn (värdemängdsdefinitioner) --------------------------------------
+
+# Namn som förekommer i kalkylark -> (nyckel, canonical URL eller None om den ska slås upp/anges).
+SYSTEM_NAMES: dict[str, tuple[str, str | None]] = {
+    "snomed ct": ("snomed", "http://snomed.info/sct"), "snomed": ("snomed", "http://snomed.info/sct"),
+    "sct": ("snomed", "http://snomed.info/sct"), "snomed ct se": ("snomed", "http://snomed.info/sct"),
+    "snomedct": ("snomed", "http://snomed.info/sct"),
+    "loinc": ("loinc", "http://loinc.org"),
+    "atc": ("atc", "http://www.whocc.no/atc"),
+    "npu": ("npu", "http://npu-terminology.org"), "npu swe": ("npu", "http://npu-terminology.org"),
+    "icd 10": ("icd10", "http://hl7.org/fhir/sid/icd-10"), "icd10": ("icd10", "http://hl7.org/fhir/sid/icd-10"),
+    "icd 10 se": ("icd10se", None), "icd10se": ("icd10se", None), "icd 10 se 2025": ("icd10se", None),
+    "kva": ("kva", None), "klassifikation av vardatgarder": ("kva", None),
+    "icf": ("icf", "http://hl7.org/fhir/sid/icf"),
+    "ucum": ("ucum", "http://unitsofmeasure.org"),
+}
+
+
+def resolve_system_name(value: str) -> tuple[str, str | None]:
+    """'SNOMED CT' -> ('snomed', 'http://snomed.info/sct'); en URL/OID returneras som den är.
+
+    Okända namn ger (normaliserad nyckel, None) – URL:en får då anges i mallen.
+    """
+    from .registry import normalize
+    raw = str(value).strip()
+    if re.match(r"^(https?://|urn:(oid|uuid):)", raw):
+        return raw, raw
+    key = normalize(raw)
+    if key in SYSTEM_NAMES:
+        return SYSTEM_NAMES[key]
+    compact = key.replace(" ", "")
+    for name, hit in SYSTEM_NAMES.items():
+        if name.replace(" ", "") == compact:
+            return hit
+    return re.sub(r"\s+", "-", key) or "okant", None
+
+
+def looks_like_system_column(values: list) -> bool:
+    """Sant om kolumnens värden mest är namn eller URL:er för kodsystem."""
+    vals = [str(v).strip() for v in values if v is not None and str(v).strip()]
+    if not vals:
+        return False
+    known = sum(1 for v in vals if resolve_system_name(v)[1] or re.match(r"^(https?://|urn:)", v)
+                or resolve_system_name(v)[0] in {k for k, _ in SYSTEM_NAMES.values()})
+    return known / len(vals) >= 0.8 and len(set(vals)) <= max(5, len(vals) // 3)

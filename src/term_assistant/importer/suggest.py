@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .external import ExternalDetection, detect
+from .external import ExternalDetection, SystemMatch, detect, looks_like_system_column, resolve_system_name
 from .mapping import (
     CodeSystemMeta,
     ColumnMapping,
@@ -50,7 +50,60 @@ ROLE_ALIASES: dict[ColumnRole, list[str]] = {
                         "overordnat begrepp"],
     ColumnRole.GROUP: ["grupp", "kategori", "gruppering", "avsnitt", "sektion", "kapitel", "omrade", "category",
                        "group"],
+    ColumnRole.SYSTEM: ["kodsystem", "code system", "codesystem", "system", "terminologi", "klassifikation",
+                        "kodsystem url", "kallkodverk"],
+    ColumnRole.SYSTEM_VERSION: ["version", "terminologiversion", "kodsystemversion", "systemversion", "utgava",
+                                "release", "versionsnummer"],
+    ColumnRole.INCLUDE: ["inkludera", "inkluderas", "inkl exkl", "ingar", "exkludera", "include", "inclusion",
+                         "inkludera exkludera", "med i urval", "urval"],
+    ColumnRole.RULE: ["regel", "matchning", "urvalsregel", "filter", "operator", "hierarki", "underordnade", "ecl",
+                      "uttryck", "match", "inklusive underordnade"],
+    ColumnRole.COMMENT: ["kommentar", "kalla", "anmarkning", "notering", "motivering", "comment", "source",
+                         "referens", "kallhanvisning"],
 }
+
+VS_ROLES = (ColumnRole.SYSTEM, ColumnRole.SYSTEM_VERSION, ColumnRole.INCLUDE, ColumnRole.RULE, ColumnRole.COMMENT)
+_INCLUDE_VALUES = {"ja", "nej", "j", "n", "x", "inkludera", "exkludera", "include", "exclude", "inkl", "exkl",
+                   "+", "-", "1", "0", "true", "false"}
+
+
+def parse_include(value) -> bool:
+    """True = inkludera, False = exkludera (tomt räknas som inkludera)."""
+    if value is None or str(value).strip() == "":
+        return True
+    v = normalize(str(value))
+    return not (v in {"nej", "n", "0", "false", "exkludera", "exclude", "exkl", "nej exkludera"} or str(value).strip() == "-"
+                or v.startswith("exkl") or v.startswith("exclude"))
+
+
+def parse_rule(value, code: str | None = None) -> tuple[str, str | None]:
+    """Tolka en regel: ('concept', None), ('is-a', None), ('descendent-of', None) eller ('ecl', uttryck)."""
+    if value is None or str(value).strip() == "":
+        return "concept", None
+    raw = str(value).strip()
+    v = normalize(raw)
+    if raw == "<<" or v in {"is a", "isa", "inkl underordnade", "inklusive underordnade", "med underordnade",
+                            "och underordnade", "inklusive underbegrepp", "med underbegrepp", "hierarki",
+                            "descendant or self", "descendantorselfof", "self and descendants"}:
+        return "is-a", None
+    if raw == "<" or v in {"descendent of", "descendant of", "endast underordnade", "underordnade", "underbegrepp",
+                           "bara underordnade", "descendants"}:
+        return "descendent-of", None
+    if raw in ("=", "==") or v in {"exakt", "exact", "kod", "endast koden", "self", "lika med", "exakt kod"}:
+        return "concept", None
+    if re.search(r"[<>^:{}|]|\b(AND|OR|MINUS)\b", raw):
+        return "ecl", raw
+    return "unknown", raw
+
+
+def _looks_like(values: list, vocabulary: set[str]) -> bool:
+    vals = [normalize(str(v)) for v in values if v is not None and str(v).strip()]
+    return bool(vals) and sum(v in vocabulary for v in vals) / len(vals) >= 0.9
+
+
+def _rule_like(values: list) -> bool:
+    vals = [v for v in values if v is not None and str(v).strip()]
+    return bool(vals) and sum(parse_rule(v)[0] != "unknown" for v in vals) / len(vals) >= 0.8
 
 
 class ColumnChoice(BaseModel):
@@ -128,9 +181,22 @@ def heuristic_choices(
     questions: list[str] = []
     by_header = {p.header: p for p in profiles}
 
+    # 0. Värdemängdsdefinition: en kolumn med kodsystem per rad ("SNOMED CT", "ICD-10-SE", URL …).
+    system_col = None
+    if sheet is not None:
+        system_col = max((p for p in profiles if looks_like_system_column(sheet.column(p.header))),
+                         key=lambda p: _role_alias_score(p.header, ColumnRole.SYSTEM), default=None)
+    if system_col is not None:
+        choices[system_col.header] = ColumnChoice(
+            source_column=system_col.header, role=ColumnRole.SYSTEM, confidence=0.95,
+            rationale="Värdena är kodsystem (" + ", ".join(system_col.top_values[:4] or system_col.samples[:4])
+                      + ") – bladet är en värdemängdsdefinition")
+
     # 1. Kodkolumn: rubrikalias, externa koder och unikhet.
     externals = {p.header: detect(sheet.column(p.header)) if sheet else None for p in profiles}
-    candidates = [p for p in profiles if p.unique_ratio > 0.85 and p.fill_ratio > 0.9]
+    min_unique = 0.4 if system_col is not None else 0.85  # samma kod kan inkluderas och exkluderas
+    candidates = [p for p in profiles if p.unique_ratio > min_unique and p.fill_ratio > 0.9
+                  and p.header not in choices]
     code = max(candidates, key=lambda p: (_role_alias_score(p.header, ColumnRole.CODE) > 0,
                                           externals.get(p.header) is not None,
                                           p.unique_ratio > 0.98,
@@ -139,6 +205,8 @@ def heuristic_choices(
         questions.append("Ingen kolumn är (nästan) unik och fullständigt ifylld – vilken kolumn innehåller koden?")
         code = profiles[0]
     external = externals.get(code.header)
+    if system_col is not None:
+        external = _systems_from_column(sheet.column(system_col.header))
     rationale = f"Unik till {code.unique_ratio:.0%} och {code.inferred_type}-lik"
     if external:
         rationale += "; koder ur " + ", ".join(s.name for s in external.systems)
@@ -147,7 +215,7 @@ def heuristic_choices(
         confidence=0.95 if _role_alias_score(code.header, ColumnRole.CODE) or external else 0.7,
         rationale=rationale,
     )
-    if code.unique_ratio < 0.98:
+    if code.unique_ratio < 0.98 and system_col is None:
         questions.append(f"Kodkolumnen '{code.header}' innehåller dubbletter – ska samma kod finnas på flera rader?")
 
     # 2. Display: alias, annars första textkolumn med hög ifyllnad.
@@ -192,7 +260,31 @@ def heuristic_choices(
                 choices[p.header] = ColumnChoice(source_column=p.header, role=ColumnRole.DERIVED, pattern=pattern,
                                                  confidence=0.95, rationale=f"Härleds ur koden: {pattern}")
 
-    # 5. Urval ur externt kodsystem: en grupperingskolumn ger ett ValueSet per grupp.
+    # 5. Urval: värdemängdsdefinitionens kolumner (version, inkludera, regel, kommentar) och gruppering.
+    if external:
+        for p in profiles:
+            if p.header in choices:
+                continue
+            values = sheet.column(p.header) if sheet else []
+            best = max(VS_ROLES[1:], key=lambda r: _role_alias_score(p.header, r))
+            score = _role_alias_score(p.header, best)
+            if not score and _looks_like(values, _INCLUDE_VALUES) and p.distinct <= 3:
+                best, score = ColumnRole.INCLUDE, 0.7
+            elif not score and _rule_like(values):
+                best, score = ColumnRole.RULE, 0.7
+            if score:
+                if best == ColumnRole.RULE and not _rule_like(values):
+                    rationale = "Rubriken liknar en urvalsregel, men värdena känns inte igen – kontrollera"
+                    score = 0.5
+                else:
+                    rationale = {ColumnRole.SYSTEM_VERSION: "Kodsystemets version (compose.include.version)",
+                                 ColumnRole.INCLUDE: "Inkludera/exkludera (compose.include/exclude)",
+                                 ColumnRole.RULE: "Urvalsregel: exakt kod, med/utan underordnade eller ECL",
+                                 ColumnRole.COMMENT: "Kommentar/källa (tillägget valueset-concept-comments)"}[best]
+                choices[p.header] = ColumnChoice(source_column=p.header, role=best, rationale=rationale,
+                                                 confidence=0.9 if score >= 1 else 0.75 if score >= 0.7 else score)
+
+    # Gruppering: en grupperingskolumn ger ett ValueSet per grupp.
     if external:
         groups = [p for p in profiles if p.header not in choices and p.inferred_type in ("text", "code")
                   and (_role_alias_score(p.header, ColumnRole.GROUP) or p.distinct <= 40 and p.filled >= p.distinct * 3)]
@@ -216,6 +308,19 @@ def heuristic_choices(
                              + (f" ({c.registry_key or c.new_property_code})" if c.registry_key or c.new_property_code else "")
                              + "?")
     return [choices[p.header] for p in profiles if p.header in by_header], questions, external
+
+
+def _systems_from_column(values: list) -> ExternalDetection:
+    """Gör en kolumn med kodsystemsnamn till samma form som igenkända externa koder."""
+    vals = [str(v).strip() for v in values if v is not None and str(v).strip()]
+    counts: dict[str, list] = {}
+    for v in vals:
+        key, uri = resolve_system_name(v)
+        entry = counts.setdefault(key, [v, uri, 0])
+        entry[2] += 1
+    systems = [SystemMatch(key=k, name=label, uri=uri, verified=uri is not None, count=n,
+                           share=round(n / len(vals), 3)) for k, (label, uri, n) in counts.items()]
+    return ExternalDetection(systems=systems, coverage=1.0, anomalies=[], unmatched=[])
 
 
 def _choose_extra(p: ColumnProfile, code_col: str, registry: PropertyRegistry,
@@ -454,6 +559,14 @@ def propose_mapping(
             s.url = f"{meta.url.rstrip('/')}/{s.name}"
     source = SourceInfo(file=source_file, sheet=sheet.name, header_row=sheet.header_row, sheets=sources)
     template, new_props = build_template(choices, profiles, registry, meta, source, sheet, external)
+    version_col = next((c for c in choices if c.role == ColumnRole.SYSTEM_VERSION), None)
+    if version_col and any(s.key == "snomed" for s in (external.systems if external else [])):
+        dates = [v for v in sheet.column(version_col.source_column) if v and re.fullmatch(r"\d{8}", str(v))]
+        if dates:
+            template.snomed_module = "45991000052106"
+            questions.append("SNOMED CT-versioner anges som datum (t.ex. " + str(dates[0]) + "). De görs om till "
+                             "utgåve-URI för svenska utgåvan (modul 45991000052106) – stämmer det, eller avses "
+                             "den internationella (900000000000207008)?")
     if external:
         for anomaly in external.anomalies:
             questions.append(f"Koden '{anomaly.code}' {anomaly.problem}.")
