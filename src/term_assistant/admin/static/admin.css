@@ -55,6 +55,7 @@ details.col { background: var(--panel); border: 1px solid var(--line); border-ra
 details.col > summary { padding: 8px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center; }
 details.col > div { padding: 4px 14px 14px; border-top: 1px solid var(--line); }
 .formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 14px; }
+.formgrid .missing input, .formgrid .missing textarea { border-color: var(--warn); }
 fieldset { border: 1px dashed var(--line); border-radius: var(--radius); margin: 10px 0; padding: 4px 12px 10px; }
 fieldset legend { font-size: 13px; color: var(--muted); }
 ul.plain { list-style: none; padding: 0; margin: 0; } ul.plain li { padding: 4px 0; border-bottom: 1px solid var(--line); }

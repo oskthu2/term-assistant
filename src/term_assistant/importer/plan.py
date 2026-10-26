@@ -9,6 +9,7 @@ resten av filen:
 * regler i löptext -> mallens releasepolicy (t.ex. inga borttag)
 * textkataloger -> designations med textroller som eget kodverk
 * urval ur externa kodsystem -> ValueSet-mallar
+* metadata (utgivare, beskrivning, kontakt, OID, licens …) med källa, se ``metadata.py``
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from . import metadata
 from .assess import SheetKind, Verdict, WorkbookAssessment, assess_workbook, match_label
 from .mapping import CodeSystemMeta, ColumnRole, GeneratedCodeSystem, GeneratedConcept, TextCatalogue, TextColumn
 from .registry import PropertyRegistry
@@ -49,6 +51,7 @@ def plan_import(
     if assessment.verdict == Verdict.REJECT:
         return plan, sheets
 
+    docs = [by_name[a.sheet] for a in assessment.sheets if a.kind == SheetKind.DOCUMENTATION]
     done: set[str] = set()
     for a in assessment.sheets:
         if a.sheet in done or a.verdict not in (Verdict.ACCEPT, Verdict.WARN):
@@ -77,6 +80,7 @@ def plan_import(
             for rel in assessment.relations:
                 if rel.subset == first.name:
                     proposal.questions += [f"Jämfört med '{rel.superset}': {h}" for h in rel.hints[:10]]
+            proposal.questions += metadata.harvest(proposal.template, [first], docs, path, assessment)
             plan.proposals.append(proposal)
             continue
 
@@ -91,6 +95,7 @@ def plan_import(
         proposal = propose_mapping(first, registry, meta, source_file=str(path),
                                    family=family if len(family) > 1 else None)
         _enrich(proposal, assessment, base, family)
+        proposal.questions += metadata.harvest(proposal.template, family, docs, path, assessment)
         if generic_name:
             proposal.questions.insert(0, f"'{generic_name}' saknar namn i källan – vad ska kodverket heta?")
         plan.proposals.append(proposal)

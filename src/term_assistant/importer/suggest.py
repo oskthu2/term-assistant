@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .external import ExternalDetection, SystemMatch, detect, looks_like_system_column, resolve_system_name
+from .lifecycle import FIELDS as LIFECYCLE_FIELDS, refine_key, values_fit
 from .mapping import (
     CodeSystemMeta,
     ColumnMapping,
@@ -218,6 +219,16 @@ def heuristic_choices(
     if code.unique_ratio < 0.98 and system_col is None:
         questions.append(f"Kodkolumnen '{code.header}' innehåller dubbletter – ska samma kod finnas på flera rader?")
 
+    # 1b. Livscykel och förvaltning (status, tillagd, borttagen, ersätts av …): fasta mål, aldrig nya egenskaper.
+    for p in profiles:
+        if p.header in choices:
+            continue
+        vs_score = max((_role_alias_score(p.header, r) for r in VS_ROLES[1:]), default=0.0) if external else 0.0
+        life = _lifecycle_choice(p, sheet.column(p.header) if sheet else p.samples, registry, vs_score,
+                                 valueset=external is not None)
+        if life:
+            choices[p.header] = life
+
     # 2. Display: alias, annars första textkolumn med hög ifyllnad.
     rest = [p for p in profiles if p.header not in choices and p.inferred_type != "marker"]
     display = max(rest, key=lambda p: (_role_alias_score(p.header, ColumnRole.DISPLAY)
@@ -310,6 +321,57 @@ def heuristic_choices(
     return [choices[p.header] for p in profiles if p.header in by_header], questions, external
 
 
+def _lifecycle_choice(p: ColumnProfile, values: list, registry: PropertyRegistry, vs_score: float = 0.0,
+                      valueset: bool = False) -> ColumnChoice | None:
+    """Känn igen en förvaltningskolumn på rubriken (registrets livscykelposter) och pröva mot värdena."""
+    for cand in registry.match(p.header, limit=6):
+        if cand.entry.kind != "lifecycle" or cand.score < 0.85 or cand.score <= vs_score:
+            continue
+        key = refine_key(cand.entry.key.split(":", 1)[1], values)
+        f = LIFECYCLE_FIELDS[key]
+        target = f.valueset if valueset else f.codesystem
+        if not values_fit(key, values):
+            if cand.score < 1:
+                continue  # en ungefärlig rubrikträff räcker inte när värdena inte passar
+            return ColumnChoice(source_column=p.header, role=ColumnRole.LIFECYCLE, registry_key=f"lifecycle:{key}",
+                                confidence=0.5, rationale=f"Rubriken anger {f.label.lower()}, men alla värden "
+                                                          f"går inte att tolka – kontrollera ({target})")
+        return ColumnChoice(source_column=p.header, role=ColumnRole.LIFECYCLE, registry_key=f"lifecycle:{key}",
+                            confidence=0.95 if cand.score >= 1 else 0.8,
+                            rationale=f"Förvaltning: {f.label} → {target} ({cand.reason})")
+    return None
+
+
+def enforce_lifecycle(choices: list[ColumnChoice], sheet: Sheet | None, registry: PropertyRegistry,
+                      valueset: bool = False) -> list[str]:
+    """Regeln gäller oavsett vem som föreslog: förvaltningskolumner blir livscykelmål, aldrig egna
+    egenskaper. Rättar valen på plats och returnerar en notering per rättning."""
+    from .lifecycle import PROPERTY_CODES, lifecycle_target_for
+    notes = []
+    for c in choices:
+        key = None
+        if c.role == ColumnRole.LIFECYCLE:
+            key = (c.registry_key or "").split(":", 1)[-1] or None
+        elif c.role == ColumnRole.PROPERTY:
+            by_header = lifecycle_target_for(c.source_column, registry)
+            by_code = PROPERTY_CODES.get(c.registry_key or c.new_property_code or "")
+            key = by_header.key if by_header else by_code
+        if key is None:
+            continue
+        values = sheet.column(c.source_column) if sheet else []
+        key = refine_key(key, values)
+        if key not in LIFECYCLE_FIELDS:
+            continue
+        if c.role != ColumnRole.LIFECYCLE:
+            notes.append(f"'{c.source_column}' föreslogs som egenskap men är förvaltningsinformation – "
+                         f"uttrycks som {LIFECYCLE_FIELDS[key].label.lower()}")
+            f = LIFECYCLE_FIELDS[key]
+            c.rationale = f"{c.rationale} → regel: {f.label} ({f.valueset if valueset else f.codesystem})"
+        c.role, c.registry_key = ColumnRole.LIFECYCLE, f"lifecycle:{key}"
+        c.new_property_code = c.new_property_type = c.new_property_description = None
+    return notes
+
+
 def _systems_from_column(values: list) -> ExternalDetection:
     """Gör en kolumn med kodsystemsnamn till samma form som igenkända externa koder."""
     vals = [str(v).strip() for v in values if v is not None and str(v).strip()]
@@ -346,8 +408,10 @@ def _choose_extra(p: ColumnProfile, code_col: str, registry: PropertyRegistry,
                             confidence=0.85, rationale=f"Benämning på språket '{language}'")
 
     used_keys = {c.registry_key for c in taken.values() if c.role == ColumnRole.PROPERTY}
-    for cand in registry.match(p.header):
+    for cand in registry.match(p.header, limit=6):
         entry = cand.entry
+        if entry.kind == "lifecycle":
+            continue  # prövas i steg 1b mot värdena
         if entry.kind == "designation":
             return ColumnChoice(source_column=p.header, role=ColumnRole.DESIGNATION, registry_key=entry.key,
                                 language=cand.language, confidence=round(cand.score * 0.95, 2),
@@ -483,6 +547,8 @@ def build_template(
             mapping.context = ContextTarget(codesystem=key, code=code)
         elif choice.role == ColumnRole.DERIVED:
             mapping.pattern = choice.pattern
+        elif choice.role == ColumnRole.LIFECYCLE:
+            mapping.lifecycle = (choice.registry_key or "").split(":", 1)[-1] or None
         mapping.ui = _ui_hints(choice, profile, order, properties.get(mapping.property_code or ""))
         columns.append(mapping)
 
@@ -509,6 +575,8 @@ def _ui_hints(choice: ColumnChoice, p: ColumnProfile | None, order: int,
         hints.widget, hints.group = "checkbox", choice.context_group
     elif choice.role == ColumnRole.DERIVED:
         hints.editable = False  # beräknas ur koden
+    elif choice.role == ColumnRole.LIFECYCLE and choice.registry_key:
+        hints.widget, hints.options = lifecycle_widget(choice.registry_key.split(":", 1)[-1], p)
     elif choice.role == ColumnRole.GROUP and p and p.top_values:
         hints.widget, hints.options = "select", p.top_values
     elif definition and definition.type == "boolean":
@@ -522,6 +590,22 @@ def _ui_hints(choice: ColumnChoice, p: ColumnProfile | None, order: int,
     elif p and (p.avg_length > 80 or choice.role == ColumnRole.DEFINITION):
         hints.widget = "textarea"
     return hints
+
+
+def lifecycle_widget(key: str, p: ColumnProfile | None = None) -> tuple[str, list[str] | None]:
+    kind = LIFECYCLE_FIELDS[key].kind if key in LIFECYCLE_FIELDS else "text"
+    if kind == "status":
+        return "select", (p.top_values if p and p.top_values and _low_cardinality(p) else
+                          ["active", "experimental", "deprecated", "retired"])
+    if kind == "flag":
+        return "checkbox", None
+    if kind == "date":
+        return "date", None
+    if kind == "code":
+        return "concept-picker", None
+    if kind == "text":
+        return "textarea", None
+    return "text", None
 
 
 def sheet_source(sheet: Sheet) -> SheetSource:

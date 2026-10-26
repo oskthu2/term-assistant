@@ -41,7 +41,10 @@ minimikraven, hittar urval ur befintliga kodsystem, familjer av flikar, katalog
 och regler) -> propose_import -> diskutera öppna frågor med användaren ->
 confirm_mapping (lär registret) -> build_resources -> för urval:
 validate_valueset. Föredra alltid befintliga registerposter framför nya
-egenskaper; använd registry_near_duplicates för att hitta synonyma egenskaper."""
+egenskaper; använd registry_near_duplicates för att hitta synonyma egenskaper.
+Förvaltningskolumner (status, tillagd, borttagen, ersätts av, senast ändrad …)
+har rollen lifecycle med fasta mål och blir aldrig nya egenskaper. Gå igenom
+förslagets metadata (utgivare, beskrivning, kontakt, OID) med användaren."""
 
 mcp = MCPServer("term-assistant", instructions=INSTRUCTIONS)
 
@@ -221,6 +224,9 @@ def confirm_mapping(template: dict, add_new_properties: bool = True) -> dict:
         if col.property_code and registry.get(col.property_code):
             registry.learn(col.source_column, col.property_code)
             learned.append(f"{col.source_column} -> {col.property_code}")
+        elif col.lifecycle and registry.get(f"lifecycle:{col.lifecycle}"):
+            registry.learn(col.source_column, f"lifecycle:{col.lifecycle}")
+            learned.append(f"{col.source_column} -> livscykel {col.lifecycle}")
         elif col.designation and col.designation.use_code:
             key = next((e.key for e in registry.entries
                         if e.designation and e.designation.use_code == col.designation.use_code), None)

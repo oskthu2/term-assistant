@@ -12,6 +12,11 @@ rad, inkludera/exkludera och en regel (exakt kod, med eller utan underordnade,
 eller ett ECL-uttryck för SNOMED CT). Exakta koder blir ``compose.include.concept``,
 regler blir ``filter`` och exkluderade rader hamnar i ``compose.exclude``.
 
+Förvaltningskolumner (status, tillagd, borttagen …, se ``lifecycle.py``)
+avgör om en rad ingår: borttagna rader och rader som ännu inte gäller hålls
+utanför compose (de ligger kvar i arbetskopian som historik), avrådda rader
+ingår men flaggas.
+
 Koderna kan valideras mot terminologitjänsten (``validate_valueset_codes``)
 så att okända, inaktiva eller felstavade koder upptäcks före publicering.
 """
@@ -23,10 +28,11 @@ import re
 from datetime import date
 from typing import Any
 
+from . import lifecycle
 from .external import classify_code
 from .mapping import ColumnRole, ImportTemplate
 from .suggest import to_constant
-from .transform import _fhir_name, _resource_id
+from .transform import _fhir_name, _resource_id, contact, identifier
 
 
 COMMENT_EXT = "http://hl7.org/fhir/StructureDefinition/valueset-concept-comments"
@@ -45,7 +51,8 @@ class _Step:
             setattr(self, k, kw.get(k))
 
 
-def build_valuesets(template: ImportTemplate, rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+def build_valuesets(template: ImportTemplate, rows: list[dict[str, Any]],
+                    on: date | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     from .external import resolve_system_name
     from .suggest import parse_include, parse_rule
 
@@ -56,6 +63,10 @@ def build_valuesets(template: ImportTemplate, rows: list[dict[str, Any]]) -> tup
     warnings: list[str] = []
     steps: list[_Step] = []
     groups: dict[str, list[_Step]] = {}
+    life_cols = lifecycle.lifecycle_columns(template.columns)
+    left_out: dict[str, list[str]] = {}
+    deprecated: list[str] = []
+    replaced: list[tuple[str, str]] = []
 
     def value(role, row):
         c = col[role]
@@ -66,6 +77,17 @@ def build_valuesets(template: ImportTemplate, rows: list[dict[str, Any]]) -> tup
         code = value(ColumnRole.CODE, row)
         if code is None:
             continue
+        if life_cols:
+            included, note, state = lifecycle.membership(life_cols, row, on)
+            warnings += [f"Rad {line}, '{code}': {msg}" for msg in state.problems]
+            if not included:
+                left_out.setdefault(note.split(" ")[0] if note.startswith("borttagen") else "ännu inte giltiga",
+                                    []).append(code)
+                continue
+            if note == "avråds":
+                deprecated.append(code)
+            if state.replaced_by:
+                replaced.append((code, state.replaced_by))
         if col[ColumnRole.SYSTEM]:
             label = value(ColumnRole.SYSTEM, row)
             if not label:
@@ -122,6 +144,16 @@ def build_valuesets(template: ImportTemplate, rows: list[dict[str, Any]]) -> tup
             else:
                 groups.setdefault(group, []).append(step)
 
+    for reason, codes in left_out.items():
+        warnings.append(f"{len(codes)} rader ingår inte i urvalet ({reason}): {', '.join(codes[:8])}"
+                        + (" …" if len(codes) > 8 else ""))
+    if deprecated:
+        warnings.append(f"{len(deprecated)} koder i urvalet är avrådda: {', '.join(deprecated[:8])}"
+                        + (" …" if len(deprecated) > 8 else ""))
+    included_codes = {s.code for s in steps if s.include}
+    for old, new in replaced:
+        if new not in included_codes:
+            warnings.append(f"'{old}' ersätts av '{new}', som inte finns i urvalet")
     resources = [_valueset(meta.url, meta.name, meta.title or meta.name, steps, meta)]
     for group, group_steps in groups.items():
         resources.append(_valueset(f"{meta.url}-{to_constant(group).lower().replace('_', '-')}",
@@ -164,8 +196,12 @@ def _valueset(url: str, name: str, title: str, steps: list[_Step], meta) -> dict
         "status": "draft",
         "experimental": False,
         "date": date.today().isoformat(),
+        "identifier": identifier(meta.identifier) if name == meta.name else None,
         "publisher": meta.publisher,
+        "contact": contact(meta.contact),
         "description": meta.description or f"Urval: {title}.",
+        "purpose": meta.purpose,
+        "copyright": meta.copyright,
         "language": meta.language,
         "compose": _compose(steps),
     }

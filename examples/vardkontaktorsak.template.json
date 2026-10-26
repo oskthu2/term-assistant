@@ -1,5 +1,5 @@
 {
-  "template_version": 2,
+  "template_version": 3,
   "kind": "codesystem",
   "codesystem": {
     "url": "http://example.org/fhir/CodeSystem/Kodverk",
@@ -8,7 +8,13 @@
     "version": "0.1.0",
     "language": "sv",
     "case_sensitive": true,
-    "hierarchy_meaning": "is-a"
+    "hierarchy_meaning": "is-a",
+    "sources": {
+      "name": "fliknamnet",
+      "title": "fliknamnet",
+      "url": "vald namnrymd",
+      "version": "standard (första version)"
+    }
   },
   "source": {
     "file": "examples/vardkontaktorsak.xlsx",
@@ -111,10 +117,10 @@
     },
     {
       "source_column": "Giltig fr.o.m.",
-      "role": "property",
-      "property_code": "effectiveDate",
-      "confidence": 1.0,
-      "rationale": "Registret: exakt alias 'giltig fr o m'",
+      "role": "lifecycle",
+      "lifecycle": "effectiveDate",
+      "confidence": 0.95,
+      "rationale": "Förvaltning: Tillagd / giltig från → egenskapen effectiveDate (concept-properties#effectiveDate) (exakt alias 'giltig fr o m')",
       "ui": {
         "label": "Giltig fr.o.m.",
         "order": 6,
@@ -125,10 +131,10 @@
     },
     {
       "source_column": "Inaktiv",
-      "role": "property",
-      "property_code": "inactive",
-      "confidence": 1.0,
-      "rationale": "Registret: exakt alias 'inaktiv'",
+      "role": "lifecycle",
+      "lifecycle": "inactive",
+      "confidence": 0.95,
+      "rationale": "Förvaltning: Inaktiv → egenskapen inactive (concept-properties#inactive) (exakt alias 'inaktiv')",
       "ui": {
         "label": "Inaktiv",
         "order": 7,
@@ -203,18 +209,6 @@
       "uri": "http://hl7.org/fhir/concept-properties#parent",
       "type": "code",
       "description": "Parent"
-    },
-    {
-      "code": "effectiveDate",
-      "uri": "http://hl7.org/fhir/concept-properties#effectiveDate",
-      "type": "dateTime",
-      "description": "Effective Date"
-    },
-    {
-      "code": "inactive",
-      "uri": "http://hl7.org/fhir/concept-properties#inactive",
-      "type": "boolean",
-      "description": "Inactive"
     },
     {
       "code": "comment",

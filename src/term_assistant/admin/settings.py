@@ -93,6 +93,11 @@ class Settings(BaseModel):
         Target(key="tx", label="Terminologitjänsten (TX_BASE_URL)", kind="fhir-api", max_classification="intern"),
     ]
     editorial: Editorial = Editorial()
+    release_required_metadata: list[str] = Field(
+        default_factory=lambda: ["publisher", "description"],
+        description="Metadata som måste finnas innan en releasekandidat skapas (Shareable-profilerna kräver "
+                    "publisher och description). Möjliga: publisher, description, contact, identifier, "
+                    "purpose, copyright.")
 
     @classmethod
     def load(cls, root: str | Path) -> "Settings":

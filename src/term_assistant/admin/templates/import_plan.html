@@ -63,12 +63,46 @@ Informationsklass: {{ settings.classification(choices.classification).label }}</
 {% endif %}
 {% for p in plan.proposals %}
 {% set t = p.template %}{% set tg = targets[loop.index0] %}{% set pi = loop.index0 %}
-<form method="post" action="/import/{{ uid }}/create/{{ pi }}" class="panel">
+<form method="post" action="/import/{{ uid }}/create/{{ pi }}" class="panel" id="forslag-{{ pi }}">
   <h3>{{ t.codesystem.title or t.codesystem.name }}
     <span class="badge muted">{{ 'ValueSet' if t.kind == 'valueset' else 'CodeSystem' }}</span>
     {% if t.source.sheets | length > 1 %}<span class="badge">{{ t.source.sheets | length }} flikar</span>{% endif %}</h3>
+  {% if t.kind == 'valueset' %}
+  <p class="small"><b>Urval</b> ur {{ t.external_systems.values() | join(', ') }} → ValueSet. Koderna förvaltas av
+  kodsystemets ägare; här förvaltas urvalet och dess metadata.</p>
+  {% else %}
+  <p class="small"><b>Eget kodverk</b> → CodeSystem{% if t.source.sheets | length > 1 %} (ett per flik){% endif %}.
+  Koderna och metadata förvaltas här.</p>
+  {% endif %}
+
+  <h4>Metadata</h4>
+  <p class="small muted">Hämtat ur filen där det gick – källan står under varje fält. Rätta eller komplettera innan
+  projektet skapas.</p>
+  <div class="formgrid">
+  {% for f in META_FIELDS if not (t.source.sheets | length > 1 and f.key == 'identifier') %}
+    {% set v = t.codesystem[f.key] %}{% set src = t.codesystem.sources.get(f.key) %}
+    <div class="{{ 'missing' if not v and f.required }}">
+      <label for="m{{ pi }}_{{ f.key }}">{{ 'Bas-URL' if f.key == 'url' and t.source.sheets | length > 1 else f.label }}
+        {% if f.required == 'import' %}<span class="badge {{ 'muted' if v else 'bad' }}">krävs</span>{% elif f.required == 'release' %}<span class="badge {{ 'ok' if v else 'warn' }}">före release</span>{% endif %}</label>
+      {% if f.key in ('description', 'purpose', 'copyright') %}
+      <textarea id="m{{ pi }}_{{ f.key }}" name="meta_{{ f.key }}" rows="2">{{ v or '' }}</textarea>
+      {% else %}
+      <input id="m{{ pi }}_{{ f.key }}" type="text" name="meta_{{ f.key }}" value="{{ v or '' }}">
+      {% endif %}
+      <div class="small muted">{{ ('från ' ~ src) if src else f.help }}</div>
+    </div>
+  {% endfor %}
+  </div>
+  {% if t.source.sheets | length > 1 %}
+  <p class="small muted">Namn, titel och OID per kodverk i familjen:
+    {% for s in t.source.sheets %}<span class="mono">{{ s.name }}</span>{% if s.identifier %} ({{ s.identifier }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}
+    – kan ändras under Metadata i projektet.</p>
+  {% endif %}
+
+  <h4>Kolumner</h4>
   <p class="small muted">Välj vad varje kolumn står för. Förslaget är förvalt; befintliga egenskaper står först i listan,
-  så att samma begrepp mappas på samma sätt i alla kodverk.</p>
+  så att samma begrepp mappas på samma sätt i alla kodverk. Förvaltningskolumner (status, tillagd, borttagen,
+  ersätts av …) har fasta mål under "Livscykel och förvaltning".</p>
   <table>
     <tr><th>Kolumn</th><th>Exempel</th><th>Står för</th><th>Säkerhet</th><th>Motivering</th></tr>
     {% for c in t.columns %}{% set j = loop.index0 %}

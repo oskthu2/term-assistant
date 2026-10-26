@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .mapping import CodeSystemMeta
 from .registry import PropertyRegistry
-from .suggest import ColumnChoice, MappingProposal, build_template
+from .suggest import ColumnChoice, MappingProposal, build_template, enforce_lifecycle
 from .workbook import Sheet
 
 MODEL = "claude-opus-5-5"
@@ -52,6 +52,11 @@ Om bladet är en värdemängdsdefinition (kodsystem anges per rad) finns dessuto
   och "Matchning" betyder oftast detta.
 - comment: kommentar eller källa per kod -> tillägget valueset-concept-comments
 I en värdemängdsdefinition ska sådana kolumner aldrig bli nya egenskaper.
+- lifecycle: förvaltningsinformation om begreppet eller raden – status, aktiv/inaktiv,
+  tillagd/giltig från, utfasad, borttagen/giltig till, ersätts av, senast ändrad,
+  ändringsnotering, tillagd/borttagen i version. Ange registry_key = en av registrets
+  lifecycle-poster (t.ex. "lifecycle:retirementDate"). Sådana kolumner blir ALDRIG
+  property – de har fasta mål så att alla kodverk uttrycker dem likadant.
 - ignore: tomma kolumner, löpnummer, interna anteckningar utan värde för kodverket
 
 Målet är att konvergera mot ett litet antal egenskaper som återanvänds mellan
@@ -126,6 +131,8 @@ def refine_with_claude(
         if c.registry_key and registry.get(c.registry_key) is None:
             c.new_property_code = c.new_property_code or c.registry_key
             c.registry_key = None
+    # Livscykelregeln gäller även modellens förslag.
+    enforce_lifecycle(choices, sheet, registry, valueset=proposal.template.kind == "valueset")
 
     old = proposal.template
     template, new_props = build_template(choices, proposal.profiles, registry, meta, old.source, sheet,

@@ -171,7 +171,8 @@ hundra varianter av "kommentar". Det hanteras med flera samverkande mekanismer:
 
 | Mekanism | Var |
 |---|---|
-| **Fröregister** med FHIR:s `concept-properties` (status, inactive, effectiveDate, comment …) och SNOMED-designation-typer (synonym, FSN) | `registry._SEED` |
+| **Fröregister** med FHIR:s `concept-properties` (comment, notSelectable, itemWeight …) och SNOMED-designation-typer (synonym, FSN) | `registry._SEED` |
+| **Livscykelregler**: förvaltningskolumner (status, tillagd, borttagen, ersätts av, senast ändrad …) är ingen egenskap utan en egen roll med fasta mål, se nedan | `lifecycle.py` |
 | **Skörd** av `CodeSystem.property` från kodverk som redan finns på tjänsten. Det som används där återanvänds. | `registry.harvest`, MCP `registry_harvest` |
 | **Alias-inlärning**: varje bekräftad mappning gör rubriken till ett alias, så nästa ark mappas automatiskt med hög säkerhet | `registry.learn` |
 | **Användningsvikt**: bland likvärdiga kandidater vinner den som redan används mest | `registry.match` |
@@ -183,6 +184,107 @@ hundra varianter av "kommentar". Det hanteras med flera samverkande mekanismer:
 
 Synonyma *begrepp* hamnar alltså på samma `CodeSystem.property.code`, eller som
 `designation` med gemensam `use`. Synonyma *rubriker* blir alias.
+
+## Eget kodverk eller urval
+
+En inläst fil är nästan alltid det ena eller det andra:
+
+* **Urval ur ett befintligt kliniskt kodsystem** (NPU, SNOMED CT, ICD-10-SE …)
+  blir ett ValueSet. Koderna och deras betydelse förvaltas av kodsystemets
+  ägare; här förvaltas *urvalet*: vilka koder som ingår, i vilka grupper, med
+  vilka regler.
+* **Ett litet eget kodverk** blir ett CodeSystem. Här förvaltas både koderna
+  och kodverket som helhet, och då blir metadata om kodverket viktig.
+
+Kvalitetsgrinden avgör vilket (`SheetKind.SUBSET` eller `CODESYSTEM`), och
+förslaget visar det överst ("Urval ur … → ValueSet" / "Eget kodverk →
+CodeSystem"). Samma regler för livscykel och metadata gäller båda spåren, men de
+får olika uttryck i FHIR.
+
+## Livscykel och förvaltning (`lifecycle.py`)
+
+Kolumner som "Tillagd", "Borttagetdatum", "Status", "Inaktiv", "Ersätts av"
+eller "Senast ändrad" beskriver inte begreppet utan hur det förvaltas. Får
+varje kodverk göra egna egenskaper av dem blir det `tillagdDatum` i ett kodverk
+och `inford` i ett annat, och "Status" kan betyda olika saker i olika filer:
+homonyma och synonyma egenskaper som ingen mottagare kan tolka.
+
+Därför har de en egen roll, `lifecycle`, med en sluten uppsättning mål. Varje
+mål har en regel för eget kodverk och en för urval:
+
+| Mål | Typiska rubriker | Eget kodverk (CodeSystem) | Urval (ValueSet) |
+|---|---|---|---|
+| `status` | Status, Begreppsstatus | egenskapen `status` (concept-properties) | styr om raden ingår |
+| `inactive` / `active` | Inaktiv, Avregistrerad / Aktiv, Gällande | egenskapen `inactive` (Aktiv inverteras) | inaktiva rader ingår inte |
+| `effectiveDate` | Tillagd, Införd, Giltig fr.o.m. | egenskapen `effectiveDate` | raden ingår först från datumet |
+| `deprecationDate` | Utfasad, Avråds från | `deprecated` (R4) / `deprecationDate` (R5) | ingår, men flaggas |
+| `retirementDate` | Borttagen, Borttagetdatum, Giltig t.o.m. | egenskapen `retirementDate` | ingår inte efter datumet |
+| `replacedBy` | Ersätts av, Ny kod | tillägget `codesystem-replacedby` + ConceptMap | flaggas om ersättaren saknas i urvalet |
+| `changed`, `changeNote` | Senast ändrad, Ändringsorsak | förvaltningsuppgift, exporteras inte | samma |
+| `versionAdded`, `versionRemoved` | Tillagd i version, Borttagen i version | förvaltningsuppgift (borttagen ger `retired`) | borttagen ingår inte |
+
+Reglerna:
+
+* **Igenkänning på rubrik och värden.** Rubriken matchas mot registrets
+  livscykelposter (fasta alias plus inlärda). En ungefärlig träff godtas bara
+  om värdena passar (datum för datummål, ja/nej för markeringar, kända
+  statusord). Värdena kan också byta mål: "Avregistrerad" med datum blir
+  `retirementDate`, "Borttagen" med bara kryss blir `inactive`.
+* **Konsekvent härledning.** Ett passerat borttagsdatum ger `status = retired`
+  och `inactive = true`. "Aktiv = Nej" ger `retired`. Ett passerat
+  utfasningsdatum ger `deprecated`. Svenska statusord ("Gällande",
+  "Avregistrerad", "Utfasad", "Preliminär") översätts till `active`, `retired`,
+  `deprecated` och `experimental`.
+* **Motsägelser blir varningar.** Exempel: status "Aktiv" med passerat
+  borttagsdatum, borttagen före tillagd, eller ersättare på ett aktivt begrepp.
+* **Inga egna egenskaper.** Att skapa en egenskap för en förvaltningskolumn
+  spärras, både i vallistan och i kolumnredigeringen, med en hänvisning till rätt
+  mål. Registret avvisar egenskapskoder som `status`, `inactive` och
+  `retirementDate`. Äldre register och mallar migreras automatiskt. Claudes
+  förslag rättas efter samma regel.
+* **Ett alias, ett mål.** När terminologen väljer ett annat mål för en rubrik
+  flyttas aliaset dit, så att rubriken inte pekar på två mål.
+* **Administrationsvyn sköter stämplarna.** Nya begrepp får "Tillagd" = i dag
+  och ändringar uppdaterar "Senast ändrad", om kolumnerna finns. Avveckling
+  använder samma mål, med status, borttagsdatum och ersättare.
+* **Urval behåller historiken.** Borttagna rader och rader som ännu inte gäller
+  ligger kvar i arbetskopian men hålls utanför `compose`. Releasen anger hur
+  många och vilka. Skillnaden mellan versioner syns i release-diffen.
+
+Varför egenskaper och inte fler tillägg för eget kodverk? FHIR:s
+`concept-properties` (status, inactive, effectiveDate, deprecationDate,
+retirementDate) *är* standardformen. Tillägg behövs bara för ersättning
+(`codesystem-replacedby`). För urval saknas en standard för datum per begrepp i
+ett ValueSet (se "Status för ett begrepp i ett ValueSet"). Därför uttrycks
+livscykeln där genom vad som ingår i varje version, inte genom ett egenhändigt
+tillägg.
+
+## Metadata om kodverket (`metadata.py`)
+
+Ett eget kodverk behöver mer än koderna. Inläsningen letar efter metadata på
+flera ställen, i prioritetsordning:
+
+1. nyckel–värde-rader ovanför tabellen ("Kodverk: KV_X", "Version: 2")
+2. dokumentationsflikar med etikett och värde ("Om kodverket": Utgivare,
+   Kontakt, Beskrivning, Syfte, Licens, OID …), på samma rad eller etikett över
+   värde
+3. katalog och revisionshistorik i dokumentationen (OID, ägare, senaste
+   version)
+4. filens dokumentegenskaper (titel, beskrivning; inte författaren, som är en
+   personuppgift)
+5. fliknamnet
+
+Varje värde sparas med sin källa och visas i inläsningsförslaget, där det kan
+rättas. Fälten har tre nivåer:
+
+| Nivå | Fält | Kontroll |
+|---|---|---|
+| krävs vid inläsning | namn, titel, canonical URL, version (X.Y.Z) | projektet skapas inte utan dem |
+| krävs före release | utgivare, beskrivning (Shareable-profilerna kräver dem) | releasekandidaten stoppas; listan ställs in med `release_required_metadata` i `settings.json` |
+| rekommenderas | kontakt, OID, upphovsrätt, syfte | varning i releasekandidaten |
+
+Kontakt tolkas till `ContactDetail` ("Namn <e-post>"), OID till
+`identifier` med `urn:oid:`. Det gäller både CodeSystem och ValueSet.
 
 ## Mallen är administrationsvyn
 

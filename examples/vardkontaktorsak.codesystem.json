@@ -6,7 +6,9 @@
   "name": "Kodverk",
   "title": "Kodverk",
   "status": "draft",
-  "date": "2026-10-23",
+  "experimental": false,
+  "date": "2026-01-01",
+  "description": "Kodverk.",
   "language": "sv",
   "caseSensitive": true,
   "hierarchyMeaning": "is-a",
@@ -18,18 +20,6 @@
       "uri": "http://hl7.org/fhir/concept-properties#parent",
       "description": "Parent",
       "type": "code"
-    },
-    {
-      "code": "effectiveDate",
-      "uri": "http://hl7.org/fhir/concept-properties#effectiveDate",
-      "description": "Effective Date",
-      "type": "dateTime"
-    },
-    {
-      "code": "inactive",
-      "uri": "http://hl7.org/fhir/concept-properties#inactive",
-      "description": "Inactive",
-      "type": "boolean"
     },
     {
       "code": "comment",
@@ -46,6 +36,24 @@
       "code": "ansvarigEnhet",
       "description": "Ansvarig enhet",
       "type": "string"
+    },
+    {
+      "code": "status",
+      "uri": "http://hl7.org/fhir/concept-properties#status",
+      "description": "Livscykelstatus: active | experimental | deprecated | retired",
+      "type": "code"
+    },
+    {
+      "code": "inactive",
+      "uri": "http://hl7.org/fhir/concept-properties#inactive",
+      "description": "Begreppet är inaktivt (avvecklat)",
+      "type": "boolean"
+    },
+    {
+      "code": "effectiveDate",
+      "uri": "http://hl7.org/fhir/concept-properties#effectiveDate",
+      "description": "Datum då begreppet började gälla",
+      "type": "dateTime"
     }
   ],
   "concept": [
@@ -61,20 +69,20 @@
       ],
       "property": [
         {
-          "code": "effectiveDate",
-          "valueDateTime": "2020-01-01"
-        },
-        {
-          "code": "inactive",
-          "valueBoolean": false
-        },
-        {
           "code": "sorteringsordning",
           "valueInteger": 1
         },
         {
           "code": "ansvarigEnhet",
           "valueString": "Enhet 1"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
         }
       ]
     },
@@ -88,20 +96,20 @@
           "valueCode": "A"
         },
         {
-          "code": "effectiveDate",
-          "valueDateTime": "2020-01-01"
-        },
-        {
-          "code": "inactive",
-          "valueBoolean": false
-        },
-        {
           "code": "sorteringsordning",
           "valueInteger": 2
         },
         {
           "code": "ansvarigEnhet",
           "valueString": "Enhet 1"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
         }
       ],
       "designation": [
@@ -130,14 +138,6 @@
           "valueCode": "A"
         },
         {
-          "code": "effectiveDate",
-          "valueDateTime": "2020-01-01"
-        },
-        {
-          "code": "inactive",
-          "valueBoolean": false
-        },
-        {
           "code": "comment",
           "valueString": "Se även B2"
         },
@@ -148,6 +148,14 @@
         {
           "code": "ansvarigEnhet",
           "valueString": "Enhet 2"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
         }
       ],
       "designation": [
@@ -187,20 +195,20 @@
       ],
       "property": [
         {
-          "code": "effectiveDate",
-          "valueDateTime": "2020-01-01"
-        },
-        {
-          "code": "inactive",
-          "valueBoolean": false
-        },
-        {
           "code": "sorteringsordning",
           "valueInteger": 4
         },
         {
           "code": "ansvarigEnhet",
           "valueString": "Enhet 1"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2020-01-01"
         }
       ]
     },
@@ -214,20 +222,20 @@
           "valueCode": "P"
         },
         {
-          "code": "effectiveDate",
-          "valueDateTime": "2021-03-01"
-        },
-        {
-          "code": "inactive",
-          "valueBoolean": false
-        },
-        {
           "code": "sorteringsordning",
           "valueInteger": 5
         },
         {
           "code": "ansvarigEnhet",
           "valueString": "Enhet 2"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": false
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2021-03-01"
         }
       ],
       "designation": [
@@ -256,14 +264,6 @@
           "valueCode": "P"
         },
         {
-          "code": "effectiveDate",
-          "valueDateTime": "2021-03-01"
-        },
-        {
-          "code": "inactive",
-          "valueBoolean": true
-        },
-        {
           "code": "comment",
           "valueString": "Utgår 2024"
         },
@@ -274,6 +274,18 @@
         {
           "code": "ansvarigEnhet",
           "valueString": "Enhet 2"
+        },
+        {
+          "code": "status",
+          "valueCode": "retired"
+        },
+        {
+          "code": "inactive",
+          "valueBoolean": true
+        },
+        {
+          "code": "effectiveDate",
+          "valueDateTime": "2021-03-01"
         }
       ],
       "designation": [

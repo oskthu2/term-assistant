@@ -63,6 +63,14 @@
   </div>
 </fieldset>
 
+<fieldset data-for="{{ prefix }}" data-role="lifecycle">
+  <legend>Livscykel och förvaltning</legend>
+  <p class="small muted">Fasta mål – samma uttryck i alla kodverk och urval, inga egna egenskaper.</p>
+  <select name="lifecycle">
+    {% for f in LIFECYCLE.values() %}<option value="{{ f.key }}" {{ 'selected' if c and c.lifecycle == f.key }}>{{ f.label }} → {{ f.valueset if tpl.kind == 'valueset' else f.codesystem }}</option>{% endfor %}
+  </select>
+</fieldset>
+
 <fieldset data-for="{{ prefix }}" data-role="derived">
   <legend>Härledning</legend>
   <label>Mönster ({codesystem} och {code} ersätts)</label>

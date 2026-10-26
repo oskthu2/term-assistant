@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any
 
+from . import lifecycle
 from .mapping import ColumnRole, GeneratedCodeSystem, ImportTemplate, PropertyDefinition, SheetSource
 from .profiling import MARKERS
-from .replacements import REPLACED_BY, REPLACED_BY_EXT
 
 _TRUE = {"ja", "j", "yes", "y", "true", "sant", "1"} | MARKERS
 _FALSE = {"nej", "n", "no", "false", "falskt", "0", ""}
@@ -23,8 +24,15 @@ class TransformError(ValueError):
 
 
 def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
-                     sheet: SheetSource | None = None) -> tuple[dict[str, Any], list[str]]:
-    """Returnera (CodeSystem, varningar). ``sheet`` ger namn/URL/OID för ett blad i en familj."""
+                     sheet: SheetSource | None = None, fhir_version: str | None = None,
+                     on: date | None = None) -> tuple[dict[str, Any], list[str]]:
+    """Returnera (CodeSystem, varningar). ``sheet`` ger namn/URL/OID för ett blad i en familj.
+
+    Livscykelkolumner översätts enligt ``lifecycle.py`` per ``fhir_version`` (standard: FHIR_VERSION)
+    och datumet ``on`` (standard: i dag)."""
+    if fhir_version is None:
+        from ..config import fhir_version as env_fhir_version
+        fhir_version = env_fhir_version()
     problems = template.validate_template()
     if problems:
         raise TransformError("; ".join(problems))
@@ -36,6 +44,8 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
     concepts: list[dict[str, Any]] = []
     seen: set[str] = set()
     cs_url = sheet.url if sheet and sheet.url else meta.url
+    life_cols = lifecycle.lifecycle_columns(template.columns)
+    life_used: set[str] = set()
 
     for line, row in enumerate(rows, start=template.source.header_row + 1):
         raw_code = row.get(code_col)
@@ -50,7 +60,8 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
         concept: dict[str, Any] = {"code": code}
         for col in template.columns:
             value = row.get(col.source_column)
-            if value is None or str(value).strip() == "" or col.role in (ColumnRole.CODE, ColumnRole.IGNORE):
+            if value is None or str(value).strip() == "" or col.role in (ColumnRole.CODE, ColumnRole.IGNORE,
+                                                                         ColumnRole.LIFECYCLE):
                 continue
             if col.role == ColumnRole.DISPLAY:
                 concept["display"] = str(value).strip()
@@ -88,10 +99,6 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
                     if text:
                         concept.setdefault("designation", []).append(
                             {"language": meta.language, "use": coding, "value": str(text).strip()})
-            elif col.role == ColumnRole.PROPERTY and col.property_code == REPLACED_BY:
-                # Standardtillägget codesystem-replacedby (R4/R5) i stället för en lokal egenskap.
-                concept.setdefault("extension", []).append(
-                    {"url": REPLACED_BY_EXT, "valueCoding": {"system": cs_url, "code": str(value).strip()}})
             elif col.role == ColumnRole.PROPERTY:
                 definition = props[col.property_code]
                 try:
@@ -100,6 +107,14 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
                     warnings.append(f"Rad {line}, kolumn '{col.source_column}': {exc}")
                     continue
                 concept.setdefault("property", []).append({"code": definition.code, _VALUE_KEY[definition.type]: typed})
+        if life_cols:
+            life_props, exts, problems = lifecycle.concept_elements(life_cols, row, cs_url, fhir_version, on)
+            if life_props:
+                concept.setdefault("property", []).extend(life_props)
+                life_used.update(p["code"] for p in life_props)
+            if exts:
+                concept.setdefault("extension", []).extend(exts)
+            warnings += [f"Rad {line}, '{code}': {msg}" for msg in problems]
         concepts.append(concept)
 
     for concept in concepts:
@@ -107,7 +122,7 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
             if prop["code"] == "parent" and prop["valueCode"] not in seen:
                 warnings.append(f"Kod '{concept['code']}': förälder '{prop['valueCode']}' finns inte i kodverket")
 
-    properties = [_property_resource(p) for p in template.properties if p.code != REPLACED_BY]
+    properties = [_property_resource(p) for p in template.properties] + lifecycle.declarations(life_used)
     for gen in template.generated_codesystems:
         if any(c.role == ColumnRole.CONTEXT and c.context.mode == "property" and c.context.codesystem == gen.key
                for c in template.columns):
@@ -117,8 +132,7 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
         "resourceType": "CodeSystem",
         "id": _resource_id(name),
         "url": (sheet.url if sheet and sheet.url else meta.url),
-        "identifier": [{"system": "urn:ietf:rfc:3986", "value": sheet.identifier}]
-        if sheet and sheet.identifier else None,
+        "identifier": identifier(sheet.identifier if sheet and sheet.identifier else meta.identifier),
         "version": meta.version,
         "name": _fhir_name(name),
         "title": (sheet.title if sheet and sheet.title else None) or meta.title or name,
@@ -126,8 +140,10 @@ def build_codesystem(template: ImportTemplate, rows: list[dict[str, Any]],
         "experimental": False,
         "date": date.today().isoformat(),
         "publisher": (sheet.publisher if sheet and sheet.publisher else meta.publisher),
+        "contact": contact(meta.contact),
         "description": meta.description or f"{(sheet.title if sheet and sheet.title else None) or meta.title or name}.",
         "purpose": meta.purpose,
+        "copyright": meta.copyright,
         "language": meta.language,
         "caseSensitive": meta.case_sensitive,
         "hierarchyMeaning": meta.hierarchy_meaning,
@@ -161,6 +177,35 @@ def generated_codesystem(gen: GeneratedCodeSystem, template: ImportTemplate) -> 
         "count": len(gen.concepts),
         "concept": [{"code": c.code, "display": c.display} for c in gen.concepts],
     }
+
+
+def identifier(value: str | None) -> list[dict] | None:
+    """OID/UUID som Identifier ('1.2.752…' får prefixet urn:oid:)."""
+    if not value:
+        return None
+    value = value.strip()
+    if re.fullmatch(r"\d+(\.\d+)+", value):
+        value = f"urn:oid:{value}"
+    return [{"system": "urn:ietf:rfc:3986", "value": value}]
+
+
+def contact(value: str | None) -> list[dict] | None:
+    """'namn <a@b.se>', 'a@b.se', 'https://…' eller ett namn -> ContactDetail."""
+    if not value or not value.strip():
+        return None
+    value = value.strip()
+    email = re.search(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", value)
+    url = re.search(r"https?://\S+", value)
+    name = re.sub(r"[<>()]", "", value.replace(email.group(0), "") if email else
+                  value.replace(url.group(0), "") if url else value).strip(" ,;:-")
+    detail: dict = {}
+    if name:
+        detail["name"] = name
+    if email:
+        detail["telecom"] = [{"system": "email", "value": email.group(0)}]
+    elif url:
+        detail["telecom"] = [{"system": "url", "value": url.group(0)}]
+    return [detail]
 
 
 def _ascii(name: str) -> str:

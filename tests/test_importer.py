@@ -54,25 +54,59 @@ def test_proposal_roles(workbook):
     assert roles["Överordnad"][0] == ColumnRole.PARENT
     assert roles["Term (en)"] == (ColumnRole.DESIGNATION, "en")
     assert roles["Synonymer"] == (ColumnRole.DESIGNATION, "designation:synonym")
-    assert roles["Giltig från"] == (ColumnRole.PROPERTY, "effectiveDate")
+    # Förvaltningskolumner får fasta livscykelmål – aldrig egna egenskaper.
+    assert roles["Giltig från"] == (ColumnRole.LIFECYCLE, "lifecycle:effectiveDate")
+    assert roles["Aktiv?"] == (ColumnRole.LIFECYCLE, "lifecycle:active")
     assert roles["Kommentar till begrepp"] == (ColumnRole.PROPERTY, "comment")
     assert roles["Tom"][0] == ColumnRole.IGNORE
-    # "Aktiv?" matchar inget i registret -> ny boolesk egenskap, flaggad som osäker
-    assert roles["Aktiv?"][0] == ColumnRole.PROPERTY
-    assert any(p.code == "aktiv" and p.type == "boolean" for p in proposal.new_properties)
-    assert any("Aktiv?" in q for q in proposal.questions)
+    assert not proposal.new_properties
     assert proposal.template.validate_template() == []
 
 
-def test_registry_converges_after_learning(workbook):
+def test_registry_converges_after_learning(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Kod", "Benämning", "Ur bruk sedan"])
+    ws.append(["A", "Alfa", None])
+    ws.append(["B", "Beta", date(2023, 5, 1)])
+    path = tmp_path / "ny.xlsx"
+    wb.save(path)
+    sheet = read_workbook(path)[0]
     registry = PropertyRegistry.default()
-    registry.learn("Aktiv?", "inactive")  # terminologen bestämmer: mappa mot befintlig egenskap
-    sheet = read_workbook(workbook)[0]
+    before = next(c for c in propose_mapping(sheet, registry, META).choices if c.source_column == "Ur bruk sedan")
+    assert before.role == ColumnRole.PROPERTY and before.new_property_code  # okänd rubrik -> ny egenskap
+    registry.learn("Ur bruk sedan", "lifecycle:retirementDate")  # terminologen bestämmer en gång
     proposal = propose_mapping(sheet, registry, META)
-    choice = next(c for c in proposal.choices if c.source_column == "Aktiv?")
-    assert choice.registry_key == "inactive"
+    choice = next(c for c in proposal.choices if c.source_column == "Ur bruk sedan")
+    assert (choice.role, choice.registry_key) == (ColumnRole.LIFECYCLE, "lifecycle:retirementDate")
     assert choice.confidence >= 0.95
     assert not proposal.new_properties
+    b = next(c for c in build_codesystem(proposal.template, sheet.rows)[0]["concept"] if c["code"] == "B")
+    assert {p["code"]: list(p.values())[1] for p in b["property"]} == {
+        "status": "retired", "inactive": True, "retirementDate": "2023-05-01"}
+
+
+def test_old_registry_and_templates_migrate_lifecycle_properties(tmp_path):
+    import json
+
+    from term_assistant.importer.mapping import ImportTemplate
+    old = {"entries": [{"kind": "property", "key": "inactive", "aliases": ["avslutad"], "usage_count": 3,
+                        "property": {"code": "inactive", "type": "boolean"}}]}
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(old))
+    registry = PropertyRegistry.load(path)
+    assert registry.get("inactive") is None
+    assert "avslutad" in registry.get("lifecycle:inactive").aliases
+    with pytest.raises(ValueError, match="livscykel"):
+        from term_assistant.importer.mapping import PropertyDefinition
+        registry.add_property(PropertyDefinition(code="retirementDate", type="dateTime"))
+    tpl = ImportTemplate.model_validate({
+        "codesystem": {"url": "http://x/cs", "name": "X"},
+        "columns": [{"source_column": "Kod", "role": "code"},
+                    {"source_column": "Ersätts av", "role": "property", "property_code": "replacedBy"}],
+        "properties": [{"code": "replacedBy", "type": "code"}]})
+    assert tpl.columns[1].role == ColumnRole.LIFECYCLE and tpl.columns[1].lifecycle == "replacedBy"
+    assert tpl.properties == [] and tpl.validate_template() == []
 
 
 def test_registry_rejects_duplicate_and_merges():
@@ -100,7 +134,12 @@ def test_build_codesystem(workbook):
     props = {p["code"]: p for p in a1["property"]}
     assert props["parent"]["valueCode"] == "A"
     assert props["effectiveDate"]["valueDateTime"] == "2020-01-01"
-    assert props["aktiv"]["valueBoolean"] is True
+    assert props["inactive"]["valueBoolean"] is False          # "Aktiv? = Ja" inverteras till inactive
+    a2 = {p["code"]: p for p in next(c for c in cs["concept"] if c["code"] == "A2")["property"]}
+    assert a2["status"]["valueCode"] == "retired" and a2["inactive"]["valueBoolean"] is True
+    declared = {p["code"]: p.get("uri") for p in cs["property"]}
+    assert declared["inactive"] == "http://hl7.org/fhir/concept-properties#inactive"
+    assert "aktiv" not in declared
     values = [d["value"] for d in a1["designation"]]
     assert values == ["Alpha one", "A-ett", "Första"]
 
@@ -158,7 +197,8 @@ def test_ai_refinement_with_stub_client(workbook):
     assert calls[0]["output_format"] is AiMapping
     by_col = {c.source_column: c for c in refined.choices}
     assert "Finns inte" not in by_col                       # okända kolumner filtreras bort
-    assert by_col["Aktiv?"].registry_key == "status"        # AI:ns beslut gäller
+    # AI:n föreslog egenskapen status – livscykelregeln rättar till rätt mål (Aktiv ja/nej).
+    assert (by_col["Aktiv?"].role, by_col["Aktiv?"].registry_key) == (ColumnRole.LIFECYCLE, "lifecycle:active")
     assert by_col["Kod"].role == ColumnRole.CODE            # heuristiken fyller luckor
     assert [c.source_column for c in refined.choices] == sheet.headers
     assert refined.questions == ai.questions

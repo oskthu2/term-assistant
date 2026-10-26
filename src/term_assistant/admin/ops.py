@@ -27,11 +27,12 @@ from ..importer.mapping import (
     PropertyDefinition,
     UiHints,
 )
+from ..importer import lifecycle, metadata
 from ..importer.registry import PropertyRegistry
 from ..importer.package import build_package, label_resources, package_manifest
 from ..importer.release import bump, check_policy, diff, release as to_release
 from ..importer.replacements import RELATIONS, REPLACED_BY, REPLACED_BY_EXT, replacement_conceptmap
-from ..importer.suggest import MappingProposal, to_constant, to_property_code
+from ..importer.suggest import MappingProposal, lifecycle_widget, to_constant, to_property_code
 from ..importer.transform import _TRUE, coerce
 from ..importer.validate import validate_resources
 from ..importer.workbook import Sheet
@@ -53,12 +54,13 @@ ROLE_LABELS = {
     ColumnRole.INCLUDE: "Inkludera/exkludera",
     ColumnRole.RULE: "Urvalsregel (exakt, underordnade, ECL)",
     ColumnRole.COMMENT: "Kommentar/källa",
+    ColumnRole.LIFECYCLE: "Livscykel och förvaltning",
     ColumnRole.IGNORE: "Ignoreras",
 }
 CS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.DEFINITION, ColumnRole.DESIGNATION, ColumnRole.PROPERTY,
-            ColumnRole.PARENT, ColumnRole.CONTEXT, ColumnRole.DERIVED, ColumnRole.IGNORE]
+            ColumnRole.PARENT, ColumnRole.CONTEXT, ColumnRole.DERIVED, ColumnRole.LIFECYCLE, ColumnRole.IGNORE]
 VS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.SYSTEM, ColumnRole.SYSTEM_VERSION, ColumnRole.INCLUDE,
-            ColumnRole.RULE, ColumnRole.COMMENT, ColumnRole.GROUP, ColumnRole.IGNORE]
+            ColumnRole.RULE, ColumnRole.COMMENT, ColumnRole.GROUP, ColumnRole.LIFECYCLE, ColumnRole.IGNORE]
 PROPERTY_TYPES = ["string", "code", "boolean", "integer", "decimal", "dateTime", "Coding"]
 _CODE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_\-]*$")
 
@@ -209,6 +211,11 @@ def update_row(tpl: ImportTemplate, data: SheetData, row: dict, form: dict, is_n
                 coerce(value, props[col.property_code])
             except ValueError as exc:
                 errors.append(f"{col.ui.label if col.ui else col.source_column}: {exc}")
+        if value is not None and col.role == ColumnRole.LIFECYCLE and col.lifecycle in lifecycle.FIELDS \
+                and not isinstance(value, bool):
+            problem = lifecycle.check_value(col.lifecycle, value)
+            if problem:
+                errors.append(f"{col.ui.label if col.ui else col.source_column}: {problem}")
         new_values[col.source_column] = value
 
     code = new_values.get(code_col, row.get(code_col))
@@ -230,7 +237,25 @@ def update_row(tpl: ImportTemplate, data: SheetData, row: dict, form: dict, is_n
         if changed:
             changes[k] = (before, v)
             row[k] = v
+    _stamp(tpl, row, changes, is_new)
     return changes
+
+
+def _stamp(tpl: ImportTemplate, row: dict, changes: dict, is_new: bool) -> None:
+    """Förvaltningsuppgifter som sköts automatiskt: 'Tillagd' för nya rader, 'Senast ändrad' vid ändring."""
+    from datetime import date
+    today = date.today().isoformat()
+    cols = lifecycle.lifecycle_columns(tpl.columns)
+    stamps = []
+    if is_new and cols.get("effectiveDate"):
+        stamps.append(cols["effectiveDate"])
+    if (changes or is_new) and cols.get("changed"):
+        stamps.append(cols["changed"])
+    for col in stamps:
+        if col in changes or (col == cols.get("effectiveDate") and row.get(col)):
+            continue
+        changes[col] = (row.get(col), today)
+        row[col] = today
 
 
 # -- kolumner -------------------------------------------------------------------------
@@ -262,13 +287,15 @@ def designation_uses(tpl: ImportTemplate, registry: PropertyRegistry) -> list[tu
     return out
 
 
-def _default_widget(role: ColumnRole, definition: PropertyDefinition | None) -> str:
+def _default_widget(role: ColumnRole, definition: PropertyDefinition | None, lifecycle_key: str | None = None) -> str:
     if role in (ColumnRole.CONTEXT,):
         return "checkbox"
     if role == ColumnRole.PARENT:
         return "concept-picker"
     if role in (ColumnRole.DEFINITION, ColumnRole.COMMENT):
         return "textarea"
+    if role == ColumnRole.LIFECYCLE and lifecycle_key:
+        return lifecycle_widget(lifecycle_key)[0]
     if definition:
         return {"boolean": "checkbox", "dateTime": "date", "integer": "number", "decimal": "number"}.get(
             definition.type, "text")
@@ -280,12 +307,14 @@ def _default_widget(role: ColumnRole, definition: PropertyDefinition | None) -> 
 
 def target_options(tpl: ImportTemplate, registry: PropertyRegistry) -> list[tuple[str, list[tuple[str, str]]]]:
     """Grupperad vallista över vad en kolumn kan stå för: [(grupp, [(värde, etikett)])]."""
+    life = ("Livscykel och förvaltning (fasta mål)", lifecycle_options(tpl.kind))
     if tpl.kind == "valueset":
         return [
             ("Begrepp", [("role:code", "Kod"), ("role:display", "Benämning (display)")]),
             ("Värdemängd", [(f"role:{r.value}", ROLE_LABELS[r]) for r in
                             (ColumnRole.SYSTEM, ColumnRole.SYSTEM_VERSION, ColumnRole.INCLUDE, ColumnRole.RULE,
                              ColumnRole.COMMENT, ColumnRole.GROUP)]),
+            life,
             ("Övrigt", [("role:ignore", "Ignoreras")]),
         ]
     props = [(f"prop:{p.code}", f"{p.code} ({p.type}){' – ' + p.description if p.description and p.description != p.code else ''}")
@@ -298,8 +327,15 @@ def target_options(tpl: ImportTemplate, registry: PropertyRegistry) -> list[tupl
                      ("role:definition", "Definition"), ("role:parent", "Överordnad kod")]),
         ("Egenskap", props + [("prop:__new__", "+ Ny egenskap (kod från rubriken)")]),
         ("Designation", desig),
+        life,
         ("Övrigt", [("role:ignore", "Ignoreras")]),
     ]
+
+
+def lifecycle_options(kind: str) -> list[tuple[str, str]]:
+    """(värde, etikett) för livscykelmålen, med vad de blir i ett kodverk respektive urval."""
+    return [(f"life:{f.key}", f"{f.label} → {f.valueset if kind == 'valueset' else f.codesystem}")
+            for f in lifecycle.FIELDS.values()]
 
 
 def learn_from_template(tpl: ImportTemplate, registry: PropertyRegistry) -> list[str]:
@@ -313,6 +349,9 @@ def learn_from_template(tpl: ImportTemplate, registry: PropertyRegistry) -> list
                     registry.add_property(definition, aliases=[col.source_column])
             registry.learn(col.source_column, col.property_code)
             learned.append(f"{col.source_column} -> {col.property_code}")
+        elif col.role == ColumnRole.LIFECYCLE and col.lifecycle and registry.get(f"lifecycle:{col.lifecycle}"):
+            registry.learn(col.source_column, f"lifecycle:{col.lifecycle}")
+            learned.append(f"{col.source_column} -> livscykel {col.lifecycle}")
         elif col.role == ColumnRole.DESIGNATION and col.designation and col.designation.use_code:
             entry = next((e for e in registry.entries if e.designation
                           and e.designation.use_code == col.designation.use_code), None)
@@ -325,6 +364,8 @@ def learn_from_template(tpl: ImportTemplate, registry: PropertyRegistry) -> list
 def current_target(col: ColumnMapping) -> str:
     if col.role == ColumnRole.PROPERTY:
         return f"prop:{col.property_code}"
+    if col.role == ColumnRole.LIFECYCLE:
+        return f"life:{col.lifecycle}"
     if col.role == ColumnRole.DESIGNATION and col.designation:
         if col.designation.use_code:
             return f"desig:use:{col.designation.use_code}"
@@ -341,6 +382,8 @@ def apply_target(tpl: ImportTemplate, index: int, value: str, registry: Property
         form["role"] = rest
         if rest == ColumnRole.IGNORE.value:
             form.pop("visible")
+    elif kind == "life":
+        form.update(role="lifecycle", lifecycle=rest)
     elif kind == "prop":
         form.update(role="property", property=rest)
         if rest == "__new__":
@@ -367,7 +410,7 @@ def update_column(tpl: ImportTemplate, index: int, form: dict, registry: Propert
     if role not in roles_for(new_tpl):
         raise OpError(f"Rollen '{role.value}' finns inte för den här typen av projekt.")
     col.role = role
-    col.property_code = col.designation = col.context = col.pattern = None
+    col.property_code = col.designation = col.context = col.pattern = col.lifecycle = None
     definition = None
 
     if role == ColumnRole.PROPERTY:
@@ -378,6 +421,11 @@ def update_column(tpl: ImportTemplate, index: int, form: dict, registry: Propert
             if not _CODE_RE.match(code):
                 raise OpError("Egenskapskoden får bara innehålla bokstäver, siffror, _ och - och måste börja med "
                               "en bokstav.")
+            # Livscykel blir aldrig en egen egenskap – annars uppstår homonyma egenskaper i olika kodverk.
+            homonym = lifecycle.lifecycle_target_for(code) or lifecycle.lifecycle_target_for(
+                col.source_column, registry)
+            if homonym:
+                raise OpError(lifecycle.homonym_message(col.ui.label if col.ui else col.source_column, homonym))
             existing = registry.get(code) or next((p for p in new_tpl.properties if p.code == code), None)
             if existing:
                 raise OpError(f"Egenskapen '{code}' finns redan – välj den i listan i stället för att skapa en ny.")
@@ -437,6 +485,12 @@ def update_column(tpl: ImportTemplate, index: int, form: dict, registry: Propert
         col.context = ContextTarget(codesystem=key, code=concept.code,
                                     mode="property" if form.get("context_mode") == "property" else "designation")
 
+    elif role == ColumnRole.LIFECYCLE:
+        key = form.get("lifecycle") or ""
+        if key not in lifecycle.FIELDS:
+            raise OpError("Välj vilken förvaltningsuppgift kolumnen står för.")
+        col.lifecycle = key
+
     elif role == ColumnRole.DERIVED:
         pattern = (form.get("pattern") or "").strip()
         if "{code}" not in pattern:
@@ -458,12 +512,14 @@ def update_column(tpl: ImportTemplate, index: int, form: dict, registry: Propert
     ui.visible = bool(form.get("visible")) and role != ColumnRole.IGNORE
     ui.editable = role not in (ColumnRole.DERIVED,) and (bool(form.get("editable")) or role == ColumnRole.CODE)
     requested = form.get("widget") or ""
-    ui.widget = requested if requested and requested != "auto" else _default_widget(role, definition)
+    ui.widget = requested if requested and requested != "auto" else _default_widget(role, definition, col.lifecycle)
     if role == ColumnRole.CONTEXT:
         ui.widget, ui.group = "checkbox", new_tpl.generated(col.context.codesystem).title.split(" (")[0]
     else:
         ui.group = None
     options = [o.strip() for o in (form.get("options") or "").split(",") if o.strip()]
+    if not options and role == ColumnRole.LIFECYCLE and ui.widget == "select":
+        options = lifecycle_widget(col.lifecycle)[1] or []
     ui.options = options or None
     if ui.widget == "select" and not ui.options:
         ui.widget = "text"
@@ -525,51 +581,47 @@ def released_codes(ws: Workspace, pid: str, sheet: str) -> set[str]:
 
 # -- livscykel: avveckling och ersättning ------------------------------------------------
 
-INACTIVE_LABEL, REPLACED_LABEL, STATUS_LABEL, RETIRED_LABEL = "Inaktiv", "Ersätts av", "Status", "Avvecklad"
-# Standardegenskaper för livscykel (definierade i R5:s concept-properties; används även i R4,
-# precis som i HL7:s terminologipaket THO). Någon standardegenskap för "ersätts av" finns inte
-# i vare sig R4, R5 eller THO – den interoperabla formen är ConceptMap.
-STATUS_PROPERTY = PropertyDefinition(code="status", uri="http://hl7.org/fhir/concept-properties#status",
-                                     type="code", description="Status")
-STATUS_VALUES = ["active", "experimental", "deprecated", "retired"]
+REPLACED_LABEL, STATUS_LABEL, RETIRED_LABEL = "Ersätts av", "Status", "Avvecklad"
+STATUS_VALUES = lifecycle.STATUS_VALUES
 RELATION_KEY, COMMENT_KEY = "_ersattningsrelation", "_ersattningskommentar"
 
 
 def lifecycle_columns(tpl: ImportTemplate, data: dict[str, SheetData]
                       ) -> tuple[ImportTemplate, ColumnMapping, ColumnMapping]:
-    """Säkerställ kolumnerna 'Inaktiv' (inactive), 'Status' (status), 'Avvecklad' (retirementDate)
-    och 'Ersätts av' (replacedBy)."""
+    """Säkerställ livscykelkolumnerna för avveckling: status, borttagsdatum och ersättare.
+    Befintliga kolumner med samma mål återanvänds (t.ex. 'Giltig t.o.m.' från källan).
+    ``inactive`` behövs inte som egen kolumn – den härleds ur status (se lifecycle.py)."""
     new_tpl = tpl.model_copy(deep=True)
 
-    def ensure(prop: PropertyDefinition, label: str, widget: str, options: list[str] | None = None
-               ) -> ColumnMapping:
-        col = next((c for c in new_tpl.columns if c.role == ColumnRole.PROPERTY and c.property_code == prop.code),
-                   None)
+    def ensure(key: str, label: str) -> ColumnMapping:
+        col = next((c for c in new_tpl.columns if c.role == ColumnRole.LIFECYCLE and c.lifecycle == key), None)
         if col is None:
-            if all(p.code != prop.code for p in new_tpl.properties):
-                new_tpl.properties.append(prop)
-            col = ColumnMapping(source_column=label, role=ColumnRole.PROPERTY, property_code=prop.code,
+            widget, options = lifecycle_widget(key)
+            col = ColumnMapping(source_column=label, role=ColumnRole.LIFECYCLE, lifecycle=key,
                                 rationale="Tillagd för avveckling av begrepp",
-                                ui=UiHints(label=label, order=len(new_tpl.columns), widget=widget,
-                                           options=options))
+                                ui=UiHints(label=label, order=len(new_tpl.columns), widget=widget, options=options))
             new_tpl.columns.append(col)
             for d in data.values():
                 if label not in d.headers:
                     d.headers.append(label)
         return col
 
-    inactive = ensure(PropertyRegistry.default().get("inactive").property, INACTIVE_LABEL, "checkbox")
-    ensure(STATUS_PROPERTY, STATUS_LABEL, "select", STATUS_VALUES)
-    ensure(PropertyRegistry.default().get("retirementDate").property, RETIRED_LABEL, "date")
-    replaced = ensure(PropertyDefinition(code=REPLACED_BY, type="code",
-                                         description="Ersätts av (kod i samma kodverk)"), REPLACED_LABEL,
-                      "concept-picker")
-    return new_tpl, inactive, replaced
+    cols = lifecycle.lifecycle_columns(new_tpl.columns)
+    status = ensure("status", STATUS_LABEL) if "status" in cols or not ({"inactive", "active"} & set(cols)) \
+        else next(c for c in new_tpl.columns if c.role == ColumnRole.LIFECYCLE and c.lifecycle in ("inactive", "active"))
+    ensure("retirementDate", RETIRED_LABEL)
+    replaced = ensure("replacedBy", REPLACED_LABEL)
+    return new_tpl, status, replaced
+
+
+def is_retired(tpl: ImportTemplate, row: dict) -> bool:
+    cols = lifecycle.lifecycle_columns(tpl.columns)
+    return bool(cols) and lifecycle.row_state(cols, row).retired
 
 
 def retire(tpl: ImportTemplate, data: dict[str, SheetData], sheet: str, row: dict, replaced_by: str | None = None,
            relation: str = "equivalent", comment: str = "") -> ImportTemplate:
-    """Markera begreppet som inaktivt, ev. med en ersättande kod i samma kodverk."""
+    """Markera begreppet som avvecklat, ev. med en ersättande kod i samma kodverk."""
     code = str(row.get(code_column(tpl)))
     replaced_by = (replaced_by or "").strip() or None
     if replaced_by:
@@ -580,15 +632,18 @@ def retire(tpl: ImportTemplate, data: dict[str, SheetData], sheet: str, row: dic
             raise OpError(f"Ersättaren '{replaced_by}' finns inte i {sheet}.")
         if relation not in RELATIONS:
             raise OpError(f"Okänd relation '{relation}'.")
-    new_tpl, inactive, replaced = lifecycle_columns(tpl, data)
-    if replaced_by and is_true(target.get(inactive.source_column)):
-        raise OpError(f"Ersättaren '{replaced_by}' är själv inaktiv – välj ett aktivt begrepp.")
+    new_tpl, status, replaced = lifecycle_columns(tpl, data)
+    if replaced_by and is_retired(new_tpl, target):
+        raise OpError(f"Ersättaren '{replaced_by}' är själv avvecklad – välj ett aktivt begrepp.")
     from datetime import date
-    row[inactive.source_column] = True
+    if status.lifecycle == "status":
+        row[status.source_column] = "retired"
+    elif status.lifecycle == "inactive":
+        row[status.source_column] = True
+    else:
+        row[status.source_column] = False
     for col in new_tpl.columns:
-        if col.role == ColumnRole.PROPERTY and col.property_code == "status":
-            row[col.source_column] = "retired"
-        elif col.role == ColumnRole.PROPERTY and col.property_code == "retirementDate":
+        if col.role == ColumnRole.LIFECYCLE and col.lifecycle == "retirementDate":
             row[col.source_column] = row.get(col.source_column) or date.today().isoformat()
     row[replaced.source_column] = replaced_by
     row[RELATION_KEY] = relation if replaced_by else None
@@ -636,7 +691,7 @@ def build(project: Project, data: dict[str, SheetData], version: str | None = No
     resources, warnings = build_all(tpl, sheets)
     if tpl.kind != "codesystem":
         return resources, warnings
-    replaced = next((c for c in tpl.columns if c.role == ColumnRole.PROPERTY and c.property_code == REPLACED_BY),
+    replaced = next((c for c in tpl.columns if c.role == ColumnRole.LIFECYCLE and c.lifecycle == "replacedBy"),
                     None)
     if replaced is None:
         return resources, warnings
@@ -737,15 +792,16 @@ def assign_oids(ws: Workspace, project: Project, settings: Settings) -> list[str
         raise OpError("Namnrymden har ingen OID-rot.")
     used = set()
     for p in ws.projects():
-        for src in p.template.source.sheets:
-            oid = (src.identifier or "").removeprefix("urn:oid:")
+        for identifier in [src.identifier for src in p.template.source.sheets] + [p.template.codesystem.identifier]:
+            oid = (identifier or "").removeprefix("urn:oid:")
             if oid.startswith(ns.oid_root + "."):
                 arc = oid[len(ns.oid_root) + 1:].split(".")[0]  # även underliggande led spärrar ledet
                 if arc.isdigit():
                     used.add(int(arc))
     assigned, n = [], 1
+    single = len(project.template.source.sheets) <= 1
     for src in project.template.source.sheets:
-        if src.identifier:
+        if src.identifier or (single and project.template.codesystem.identifier):
             continue
         while n in used:
             n += 1
@@ -780,6 +836,9 @@ def create_release_candidate(ws: Workspace, project: Project, data: dict[str, Sh
     prev_by_url = {r["url"]: r for r in previous.resources} if previous else {}
     diffs, errors = [], []
     errors += namespace_errors(project, resources, settings)
+    meta_errors, meta_warnings = metadata.release_errors(project.template, settings.release_required_metadata)
+    errors += meta_errors
+    warnings += meta_warnings
     issues = validate_resources(resources, fhir_version())
     errors += [f"Profilvalidering: {i}" for i in issues if i.severity == "error"]
     warnings += [f"Profilvalidering: {i}" for i in issues if i.severity == "warning"]

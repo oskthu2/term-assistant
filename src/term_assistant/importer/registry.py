@@ -6,6 +6,10 @@ håller en begränsad uppsättning kanoniska mål:
 
 * ``property``-poster motsvarar ``CodeSystem.property`` (code, uri, type)
 * ``designation``-poster motsvarar en ``designation.use`` (+ ev. språk)
+* ``lifecycle``-poster är de fasta målen för förvaltningskolumner (status,
+  tillagd, borttagen, ersätts av …), se ``lifecycle.py``. De är inga
+  egenskaper: registret lär sig bara nya rubriker för dem, så att t.ex.
+  "Tillagd datum" och "Införd" aldrig blir två olika egenskaper.
 
 Varje post har alias (kolumnrubriker som tidigare bekräftats betyda samma
 sak). När en användare bekräftar en mappning lär sig registret rubriken som
@@ -79,8 +83,8 @@ def is_negation(a: str, b: str) -> bool:
 
 
 class RegistryEntry(BaseModel):
-    kind: Literal["property", "designation"]
-    key: str = Field(description="Unik nyckel: property.code, eller 'designation:<use_code>'")
+    kind: Literal["property", "designation", "lifecycle"]
+    key: str = Field(description="Unik nyckel: property.code, 'designation:<use_code>' eller 'lifecycle:<mål>'")
     property: PropertyDefinition | None = None
     designation: DesignationTarget | None = None
     aliases: list[str] = []
@@ -95,6 +99,9 @@ class RegistryEntry(BaseModel):
                 names.append(self.property.description)
         if self.designation and self.designation.use_display:
             names.append(self.designation.use_display)
+        if self.kind == "lifecycle":
+            from .lifecycle import FIELDS
+            names.append(FIELDS[self.key.split(":", 1)[1]].label)
         return [normalize(n) for n in names if n]
 
 
@@ -113,7 +120,9 @@ class PropertyRegistry(BaseModel):
     @classmethod
     def load(cls, path: str | Path | None) -> "PropertyRegistry":
         if path and Path(path).exists():
-            return cls.model_validate_json(Path(path).read_text(encoding="utf-8"))
+            registry = cls.model_validate_json(Path(path).read_text(encoding="utf-8"))
+            registry._migrate_lifecycle()
+            return registry
         return cls.default()
 
     def save(self, path: str | Path) -> None:
@@ -121,8 +130,26 @@ class PropertyRegistry(BaseModel):
 
     @classmethod
     def default(cls) -> "PropertyRegistry":
-        return cls(entries=[e.model_copy(deep=True) for e in _SEED])
+        registry = cls(entries=[e.model_copy(deep=True) for e in _SEED])
+        registry._migrate_lifecycle()
+        return registry
 
+    def _migrate_lifecycle(self) -> None:
+        """Säkerställ livscykelposterna och gör om äldre livscykelegenskaper (status, inactive,
+        effectiveDate …) till alias för dem."""
+        from .lifecycle import FIELDS, PROPERTY_CODES
+        for f in FIELDS.values():
+            if self.get(f"lifecycle:{f.key}") is None:
+                self.entries.append(RegistryEntry(kind="lifecycle", key=f"lifecycle:{f.key}", source="lifecycle",
+                                                  aliases=list(f.aliases)))
+        for entry in [e for e in self.entries if e.kind == "property" and e.property
+                      and e.property.code in PROPERTY_CODES]:
+            target = self.get(f"lifecycle:{PROPERTY_CODES[entry.property.code]}")
+            for alias in entry.aliases:
+                if alias not in target.aliases:
+                    target.aliases.append(alias)
+            target.usage_count += entry.usage_count
+            self.entries.remove(entry)
     # -- uppslag ----------------------------------------------------------
 
     def get(self, key: str) -> RegistryEntry | None:
@@ -130,6 +157,9 @@ class PropertyRegistry(BaseModel):
 
     def properties(self) -> list[RegistryEntry]:
         return [e for e in self.entries if e.kind == "property"]
+
+    def lifecycle(self) -> list[RegistryEntry]:
+        return [e for e in self.entries if e.kind == "lifecycle"]
 
     def match(self, header: str, limit: int = 3, cutoff: float = 0.72) -> list[Candidate]:
         """Föreslå registerposter för en kolumnrubrik, bästa först."""
@@ -166,6 +196,10 @@ class PropertyRegistry(BaseModel):
         if entry is None:
             raise KeyError(f"Okänd registerpost '{key}'")
         alias = split_language(header)[0] if entry.kind == "designation" else normalize(header)
+        if entry.kind == "lifecycle":  # en rubrik pekar på ett enda livscykelmål
+            for other in self.lifecycle():
+                if other is not entry and alias in other.aliases:
+                    other.aliases.remove(alias)
         if alias and alias not in entry.all_names():
             entry.aliases.append(alias)
         entry.usage_count += 1
@@ -173,7 +207,12 @@ class PropertyRegistry(BaseModel):
 
     def add_property(self, definition: PropertyDefinition, aliases: list[str] | None = None,
                      source: str = "local") -> RegistryEntry:
-        """Lägg till en ny egenskap. Avvisas om koden eller URI:n redan finns."""
+        """Lägg till en ny egenskap. Avvisas om koden eller URI:n redan finns, eller om koden är ett
+        livscykelmål (status, inactive …) – de uttrycks bara på ett sätt."""
+        from .lifecycle import FIELDS, PROPERTY_CODES
+        if definition.code in PROPERTY_CODES:
+            raise ValueError(f"'{definition.code}' är livscykelinformation ({FIELDS[PROPERTY_CODES[definition.code]].label})"
+                             " och kan inte bli en egen egenskap.")
         for entry in self.properties():
             if entry.property.code == definition.code or (definition.uri and entry.property.uri == definition.uri):
                 raise ValueError(f"Egenskapen finns redan som '{entry.key}' – återanvänd den eller lägg till alias.")
@@ -189,6 +228,8 @@ class PropertyRegistry(BaseModel):
             raise KeyError("Båda posterna måste finnas")
         if kept.kind != dropped.kind:
             raise ValueError("Kan inte slå ihop en property med en designation")
+        if kept.kind == "lifecycle":
+            raise ValueError("Livscykelmålen är fasta och kan inte slås ihop")
         for name in dropped.all_names():
             if name not in kept.all_names():
                 kept.aliases.append(name)
@@ -201,7 +242,7 @@ class PropertyRegistry(BaseModel):
         pairs = []
         for i, a in enumerate(self.entries):
             for b in self.entries[i + 1:]:
-                if a.kind != b.kind:
+                if a.kind != b.kind or a.kind == "lifecycle":  # livscykelmålen är fasta
                     continue
                 if a.property and b.property and a.property.type != b.property.type:
                     continue
@@ -220,10 +261,13 @@ class PropertyRegistry(BaseModel):
 
     def harvest(self, codesystems: list[dict]) -> int:
         """Skörda CodeSystem.property från befintliga kodverk. Returnerar antal nya poster."""
+        from .lifecycle import PROPERTY_CODES
         added = 0
         for cs in codesystems:
             for prop in cs.get("property", []):
                 code, uri = prop.get("code"), prop.get("uri")
+                if code in PROPERTY_CODES:  # livscykel: inga nya egenskaper
+                    continue
                 existing = next(
                     (e for e in self.properties()
                      if (uri and e.property.uri == uri) or e.property.code == code),
@@ -251,6 +295,8 @@ class PropertyRegistry(BaseModel):
                 p = e.property
                 lines.append(f"- property key={e.key} type={p.type} uri={p.uri or '-'} "
                              f"aliases={', '.join(e.aliases[:8]) or '-'} uses={e.usage_count}")
+            elif e.kind == "lifecycle":
+                lines.append(f"- lifecycle key={e.key} aliases={', '.join(e.aliases[:8]) or '-'}")
             else:
                 d = e.designation
                 lines.append(f"- designation key={e.key} use={d.use_system}|{d.use_code} ({d.use_display}) "
@@ -275,15 +321,8 @@ def _designation(key: str, code: str, display: str, aliases: list[str]) -> Regis
 
 
 _SEED: list[RegistryEntry] = [
-    _prop("status", "code", "Status", ["status", "tillstånd", "begreppsstatus"]),
-    _prop("inactive", "boolean", "Inactive", ["inaktiv", "inactive", "utgången", "avregistrerad", "ej aktiv"]),
-    _prop("deprecated", "dateTime", "Deprecated", ["utfasad", "deprecated", "utfasningsdatum"]),
     _prop("notSelectable", "boolean", "Not Selectable",
           ["ej valbar", "not selectable", "abstrakt", "gruppering"]),
-    _prop("effectiveDate", "dateTime", "Effective Date",
-          ["giltig from", "giltig fr o m", "giltig fran", "gäller från", "startdatum", "effective date"]),
-    _prop("retirementDate", "dateTime", "Retirement Date",
-          ["giltig tom", "giltig t o m", "giltig till", "gäller till", "slutdatum", "retirement date"]),
     _prop("comment", "string", "Comment", ["kommentar", "anmärkning", "notering", "comment", "note", "not"]),
     _prop("itemWeight", "decimal", "Item Weight", ["vikt", "poäng", "score", "weight", "värde"]),
     _designation("synonym", "900000000000013009", "Synonym",

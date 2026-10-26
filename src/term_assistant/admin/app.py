@@ -29,6 +29,7 @@ from ..config import ServerConfig, fhir_version
 from ..importer.mapping import ColumnRole
 from ..importer.plan import ImportPlan, plan_import
 from ..importer.registry import PropertyRegistry
+from ..importer import lifecycle, metadata
 from ..importer.replacements import RELATIONS
 from ..importer.suggest import MappingProposal
 from ..importer.workbook import read_workbook
@@ -59,7 +60,8 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
     ws = Workspace(workspace)
     reg_path = Path(registry_path) if registry_path else ws.root / "registry.json"
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]))
-    env.globals.update(ROLE_LABELS=ops.ROLE_LABELS, ColumnRole=ColumnRole, quote=quote, RELATIONS=RELATIONS,
+    env.globals.update(ROLE_LABELS=ops.ROLE_LABELS, is_retired=ops.is_retired, LIFECYCLE=lifecycle.FIELDS,
+                       META_FIELDS=metadata.FIELDS, ColumnRole=ColumnRole, quote=quote, RELATIONS=RELATIONS,
                        tx_url=lambda: ServerConfig.from_env().base_url, fhir_version=fhir_version,
                        publish_enabled=lambda: os.environ.get("TX_PUBLISH") == "1",
                        validator_enabled=lambda: bool(os.environ.get("FHIR_VALIDATOR_JAR")),
@@ -197,12 +199,16 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         title = (form.get("title") or proposal.template.codesystem.title or proposal.template.codesystem.name).strip()
         reg = registry()
         selected = {}
+        metadata.apply_form(proposal.template, form)
         try:
             for j, col in enumerate(list(proposal.template.columns)):
                 value = form.get(f"col_{j}")
                 selected[(i, j)] = value
                 if value and value != ops.current_target(col):
                     proposal.template = ops.apply_target(proposal.template, j, value, reg)
+            problems = metadata.import_errors(proposal.template)
+            if problems:
+                raise ops.OpError(problems)
         except ops.OpError as exc:
             return _plan_page(request, uid, plan, choices, exc.messages, 400, selected)
         sheets = read_workbook(ws.upload_path(uid))
@@ -231,7 +237,10 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         cfg = settings()
         tpl = project.template
         project.title = (form.get("title") or project.title).strip()
-        for field in ("title", "publisher", "description", "purpose", "language"):
+        for field in ("title", "publisher", "description", "purpose", "language", "contact", "copyright",
+                      "identifier"):
+            if f"cs_{field}" not in form and field == "identifier":
+                continue
             value = (form.get(f"cs_{field}") or "").strip()
             setattr(tpl.codesystem, field, value or (tpl.codesystem.language if field == "language" else None))
         url = (form.get("cs_url") or "").strip()

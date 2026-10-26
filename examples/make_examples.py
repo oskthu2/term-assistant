@@ -10,6 +10,9 @@ Innehållet är påhittat men strukturen följer verkliga fall:
 * ``lab_urval.xlsx`` – urval ur NPU/SWE-koder: ett kort urval med grupp (och en
   felskriven kod), en längre grupperad lista med tomrader och en stor referenslista
 * ``lista_utan_koder.pdf`` – tre listor med bara benämningar (ska avvisas)
+* ``vardemangdsdefinition.xlsx`` – urval där kodsystem, version, regel och inkludera anges per rad
+* ``eget_kodverk.xlsx`` – ett litet eget kodverk med metadataflik ("Om kodverket") och
+  förvaltningskolumner: status, tillagd, borttagetdatum, ersätts av, senast ändrad, ändringsorsak
 
 Kör:  python examples/make_examples.py [målkatalog]
 """
@@ -181,6 +184,39 @@ def make_valueset_definition_workbook(path: Path) -> Path:
     return path
 
 
+def make_own_codesystem_workbook(path: Path) -> Path:
+    wb = Workbook()
+    about = wb.active
+    about.title = "Om kodverket"
+    for row in [
+        ("Kodverk", "KV_BESOKSTYP"),
+        ("Titel", "Typ av besök"),
+        ("Version", "2.1"),
+        ("Utgivare", "Exempelregionen, Terminologienheten"),
+        ("Kontakt", "Terminologienheten <terminologi@example.org>"),
+        ("Beskrivning", "Typ av besök i öppen vård, för uppföljning och ersättning."),
+        ("Syfte", "Gemensam klassning av besök i vårdinformationssystemen."),
+        ("Licens", "Fri att använda (CC0)."),
+        ("OID", "1.2.752.999.7.1"),
+    ]:
+        about.append(row)
+    ws = wb.create_sheet("KV_BESOKSTYP")
+    ws.append(["Kod", "Benämning", "Beskrivning", "Status", "Tillagd", "Borttagetdatum", "Ersätts av",
+               "Senast ändrad", "Ändringsorsak"])
+    ws.append(["MOTT", "Mottagningsbesök", "Besök på mottagning", "Aktiv", date(2019, 1, 1), None, None,
+               date(2019, 1, 1), None])
+    ws.append(["HEM", "Hembesök", "Besök i patientens hem", "Aktiv", date(2019, 1, 1), None, None,
+               date(2019, 1, 1), None])
+    ws.append(["TEL", "Telefonkontakt", "Kontakt per telefon", "Avregistrerad", date(2019, 1, 1),
+               date(2023, 12, 31), "DIST", date(2023, 12, 1), "Ersätts av distanskontakt"])
+    ws.append(["DIST", "Distanskontakt", "Kontakt per telefon eller video", "Aktiv", date(2024, 1, 1), None,
+               None, date(2023, 12, 1), "Ny"])
+    ws.append(["GRUPP", "Gruppbesök", "Besök i grupp", "Utfasad", date(2019, 1, 1), None, None,
+               date(2024, 6, 1), "Ska ersättas i nästa version"])
+    wb.save(path)
+    return path
+
+
 def make_list_pdf(path: Path) -> Path:
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
@@ -206,5 +242,6 @@ if __name__ == "__main__":
     out = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parent)
     for fn, name in [(make_simple_workbook, "vardkontaktorsak.xlsx"), (make_family_workbook, "kodverk_familj.xlsx"),
                      (make_lab_workbook, "lab_urval.xlsx"), (make_list_pdf, "lista_utan_koder.pdf"),
-                     (make_valueset_definition_workbook, "vardemangdsdefinition.xlsx")]:
+                     (make_valueset_definition_workbook, "vardemangdsdefinition.xlsx"),
+                     (make_own_codesystem_workbook, "eget_kodverk.xlsx")]:
         print("Skrev", fn(out / name))

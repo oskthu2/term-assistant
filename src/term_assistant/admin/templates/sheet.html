@@ -2,7 +2,6 @@
 {% block title %}{{ sheet }} – {{ project.title }}{% endblock %}
 {% block content %}
 {% set active = 'sheet:' ~ sheet %}{% include "_project_tabs.html" %}
-{% set inactive_col = (tpl.columns | selectattr('property_code', 'equalto', 'inactive') | first) %}
 {% set src = (tpl.source.sheets | selectattr('sheet', 'equalto', sheet) | first) %}
 {% if src and src.title %}<p class="muted">{{ src.title }}{% if src.url %} · <span class="mono small">{{ src.url }}</span>{% endif %}</p>{% endif %}
 <div class="toolbar">
@@ -37,7 +36,7 @@
   <tbody>
   {% for row in data.rows %}
     {% set code = row.get(code_col) %}
-    <tr class="{{ 'inactive' if inactive_col and cell(tpl, inactive_col, row, sheet) is sameas true }}">
+    <tr class="{{ 'inactive' if is_retired(tpl, row) }}">
     {% for i, c in columns %}
       {% set v = cell(tpl, c, row, sheet) %}
       {% if c.role == ColumnRole.CODE %}

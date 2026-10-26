@@ -170,6 +170,14 @@ värdemängdsroller och "ny egenskap". Valen sparas i egenskapsregistret, så at
 samma rubrik gissas rätt nästa gång. Kryssa i "Låt Claude granska förslagen"
 för att få en AI-granskning av tolkningarna innan du väljer.
 
+Förvaltningskolumner (Status, Tillagd, Borttagetdatum, Ersätts av, Senast ändrad …)
+har fasta mål under "Livscykel och förvaltning" och blir aldrig egna egenskaper.
+I ett eget kodverk blir de FHIR:s standardegenskaper (`status`, `inactive`,
+`effectiveDate`, `retirementDate`) och tillägget `codesystem-replacedby`. I ett
+urval styr de vilka koder som ingår. Förslaget visar också kodverkets metadata
+(utgivare, beskrivning, kontakt, OID, licens) med var i filen värdet hittades.
+Se [arkitekturen](docs/arkitektur.md#livscykel-och-förvaltning-lifecyclepy).
+
 ### Typfall
 
 | Fil | Bedömning | Resultat |
@@ -177,6 +185,7 @@ för att få en AI-granskning av tolkningarna innan du väljer.
 | `lista_utan_koder.pdf` – listor med bara benämningar | **avvisad** | Minimikraven (en kod per rad, benämning, rubrikrad, ett kodverk per flik) och specifika tips: tre separata listor, lämna Excel/CSV i stället för PDF |
 | `lab_urval.xlsx` – NPU/SWE-koder i flera flikar | **godkänd med anmärkningar** | Flikarna känns igen som *urval* ur NPU och SWE-tillägg och blir ValueSet, ett per grupp ("Grupp"/"Kategori"). Den stora fliken blir referenslista. `NPU1059` flaggas som felskriven, med förslaget `NPU10599` från en annan flik där samma analys finns |
 | `vardemangdsdefinition.xlsx` – kodsystem per rad, regel, inkludera, version, källa | **godkänd med anmärkningar** (URL för ICD-10-SE ska anges) | Värdemängdsdefinition. Kolumnerna blir `compose.include/exclude`, filter (`is-a`, ECL) och kommentarstillägg i stället för nya egenskaper. SNOMED-versioner blir utgåve-URI:er |
+| `eget_kodverk.xlsx` – litet eget kodverk med "Om kodverket"-flik och förvaltningskolumner | **godkänd** | Metadata (namn, titel, version, utgivare, kontakt, beskrivning, syfte, licens, OID) hämtas ur fliken, med källa. Status, Tillagd, Borttagetdatum och Ersätts av blir standardegenskaper och `codesystem-replacedby`. Senast ändrad och Ändringsorsak stannar i arbetskopian. Inga nya egenskaper |
 | `kodverk_familj.xlsx` – flikar med samma struktur | **godkänd** | En mall för hela familjen och ett CodeSystem per flik. Kryssen under "Används av" blir designations, och deras `use` pekar på ett genererat kontextkodverk. Text-ID:n som går att räkna fram ur koden blir `derived`. Katalogen ger OID och ägare, historiken ger version, och regeln "koder får inte tas bort" blir releasepolicy. Textkatalogen ger designations med textroller (RBK/HLP) |
 
 Exempel på utdata från `analyze` för ett enkelt kodverk (`examples/vardkontaktorsak.xlsx`):
@@ -188,8 +197,8 @@ Beskrivning        → definition
 Överordnad kod     → parent          (värdena finns i kodkolumnen)
 Benämning (en)     → designation     language=en
 Synonymer          → designation     SNOMED 900000000000013009 (synonym)
-Giltig fr.o.m.     → property        effectiveDate
-Inaktiv            → property        inactive
+Giltig fr.o.m.     → lifecycle       effectiveDate   (fast mål, ingen egen egenskap)
+Inaktiv            → lifecycle       inactive
 Anmärkning         → property        comment
 Sorteringsordning  → property (NY)   sorteringsordning  ? fråga till terminologen
 Ansvarig enhet     → property (NY)   ansvarigEnhet      ? fråga till terminologen
@@ -213,6 +222,8 @@ src/term_assistant/
     assess.py            kvalitetsgrind: bladtyper, utfall, tips, familjer, relationer, katalog
     external.py          igenkänning av NPU, SWE, SNOMED CT, LOINC, ATC, ICD-10, KVÅ
     plan.py              importplan för hela arbetsboken (en mall per familj/urval)
+    lifecycle.py         regler för förvaltningskolumner (status, tillagd, borttagen, ersätts av …)
+    metadata.py          metadata om kodverket: var den hittas, när den krävs
     profiling.py         kolumnprofiler (typ, unikhet, kardinalitet, hierarki, kryss)
     registry.py          egenskapsregistret: alias, inlärning, sammanslagning
     suggest.py           heuristiska förslag -> mall

@@ -34,6 +34,7 @@ def family_project(tmp_path):
     ws = Workspace(tmp_path / "ws")
     path = make_family_workbook(tmp_path / "familj.xlsx")
     plan, sheets = plan_import(path, BASE, PropertyRegistry.default())
+    plan.proposals[0].template.codesystem.description = "Exempelkodverk för intyg."  # krävs före release
     project = ops.create_project(ws, plan.proposals[0], sheets, "KV EX", "anna", namespace=NS,
                                  classification="intern")
     return ws, project
@@ -44,6 +45,7 @@ def lab_project(tmp_path):
     ws = Workspace(tmp_path / "ws")
     path = make_lab_workbook(tmp_path / "lab.xlsx")
     plan, sheets = plan_import(path, BASE, PropertyRegistry.default())
+    plan.proposals[1].template.codesystem.description = "Urval av labbanalyser."
     project = ops.create_project(ws, plan.proposals[1], sheets, "Labbgrupper", "anna", namespace=NS,
                                  classification="öppen")
     return ws, project
@@ -364,7 +366,13 @@ def test_web_flow_family(tmp_path):
     assert r.status_code == 200 and "Skapa projekt" in r.text and "familj KV_EX" in r.text
     uid = r.url.path.rsplit("/", 1)[1]
     anna, bertil = {"X-Remote-User": "anna"}, {"X-Remote-User": "bertil"}
-    r = client.post(f"/import/{uid}/create/0", data={"title": "KV EX"}, headers=anna)
+    # Metadata hämtad ur filen visas med källa; det som saknas fylls i före inläsning.
+    assert "fliken &#39;Inledning&#39; (Dokumentägare)" in r.text and "före release" in r.text
+    r = client.post(f"/import/{uid}/create/0", data={"title": "KV EX", "meta_version": "ett"}, headers=anna)
+    assert r.status_code == 400 and "X.Y.Z" in r.text
+    r = client.post(f"/import/{uid}/create/0", data={
+        "title": "KV EX", "meta_version": "1.1", "meta_description": "Kodverk för underlag i intyg.",
+        "meta_contact": "Kodverksförvaltningen <kodverk@example.org>"}, headers=anna)
     pid = r.url.path.rsplit("/", 1)[1]
     assert "Öppna frågor" in r.text and "Intern" in r.text
 

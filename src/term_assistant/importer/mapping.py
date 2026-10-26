@@ -20,7 +20,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ColumnRole(str, Enum):
@@ -39,6 +39,8 @@ class ColumnRole(str, Enum):
     INCLUDE = "include"          # Inkludera/exkludera -> compose.include / compose.exclude
     RULE = "rule"                # Exakt kod, med/utan underordnade eller ECL -> concept eller filter
     COMMENT = "comment"          # Kommentar/källa -> tillägget valueset-concept-comments
+    # Förvaltning: status, tillagd, borttagen, ersätts av … -> fasta mål, se lifecycle.py
+    LIFECYCLE = "lifecycle"
     IGNORE = "ignore"            # Läses inte in
 
 
@@ -88,6 +90,7 @@ class ColumnMapping(BaseModel):
     designation: DesignationTarget | None = Field(None, description="När role=designation")
     context: ContextTarget | None = Field(None, description="När role=context")
     pattern: str | None = Field(None, description="När role=derived, t.ex. '{codesystem}.{code}.RBK'")
+    lifecycle: str | None = Field(None, description="När role=lifecycle: målet, t.ex. 'retirementDate'")
     confidence: float = Field(1.0, ge=0, le=1)
     rationale: str = ""
     note: str | None = Field(None, description="Fotnot kopplad till kolumnen i källan")
@@ -137,6 +140,10 @@ class CodeSystemMeta(BaseModel):
     hierarchy_meaning: Literal["grouped-by", "is-a", "part-of", "classified-with"] | None = None
     description: str | None = None
     purpose: str | None = None
+    contact: str | None = Field(None, description="E-postadress eller namn på kontaktpunkt")
+    copyright: str | None = None
+    identifier: str | None = Field(None, description="OID/UUID för ett enskilt kodverk, t.ex. 'urn:oid:1.2.752…'")
+    sources: dict[str, str] = Field(default_factory=dict, description="Fält -> var värdet hittades i källan")
 
 
 class SheetSource(BaseModel):
@@ -181,7 +188,7 @@ class TextCatalogue(BaseModel):
 class ImportTemplate(BaseModel):
     """Inläsningsmall och tillika specifikation för administrationsvyn."""
 
-    template_version: int = 2
+    template_version: int = 3
     kind: Literal["codesystem", "valueset"] = "codesystem"
     codesystem: CodeSystemMeta
     source: SourceInfo = SourceInfo()
@@ -198,6 +205,20 @@ class ImportTemplate(BaseModel):
     license_note: str | None = Field(None, description="Licensvillkor som följer med paketet")
     snomed_module: str | None = Field(None, description="SNOMED CT-utgåva (modul-id) för versioner angivna som "
                                                         "datum, t.ex. 45991000052106 (Sverige)")
+
+    @model_validator(mode="after")
+    def _lifecycle_columns(self) -> "ImportTemplate":
+        """Äldre mallar hade livscykel som egenskaper (status, inactive, replacedBy …) – gör om dem."""
+        from .lifecycle import PROPERTY_CODES
+        moved = set()
+        for col in self.columns:
+            if col.role == ColumnRole.PROPERTY and col.property_code in PROPERTY_CODES:
+                col.role, col.lifecycle = ColumnRole.LIFECYCLE, PROPERTY_CODES[col.property_code]
+                moved.add(col.property_code)
+                col.property_code = None
+        if moved:
+            self.properties = [p for p in self.properties if p.code not in moved]
+        return self
 
     def column(self, role: ColumnRole) -> ColumnMapping | None:
         return next((c for c in self.columns if c.role == role), None)
@@ -225,6 +246,18 @@ class ImportTemplate(BaseModel):
                     problems.append(f"Kolumn '{col.source_column}' pekar på en okänd kontext.")
             if col.role == ColumnRole.DERIVED and not col.pattern:
                 problems.append(f"Kolumn '{col.source_column}' saknar härledningsmönster.")
+        from .lifecycle import FIELDS, PROPERTY_CODES
+        for p in self.properties:
+            if p.code in PROPERTY_CODES:
+                problems.append(f"Egenskapen '{p.code}' är livscykelinformation och ska vara en livscykelkolumn.")
+        life = [c.lifecycle for c in self.columns if c.role == ColumnRole.LIFECYCLE]
+        for col in self.columns:
+            if col.role == ColumnRole.LIFECYCLE and col.lifecycle not in FIELDS:
+                problems.append(f"Kolumn '{col.source_column}' har ett okänt livscykelmål '{col.lifecycle}'.")
+        for dup in {k for k in life if life.count(k) > 1}:
+            problems.append(f"Flera kolumner står för samma livscykeluppgift '{dup}'.")
+        if "inactive" in life and "active" in life:
+            problems.append("Både 'Inaktiv' och 'Aktiv' finns – behåll en av dem.")
         used = [c.property_code for c in self.columns if c.role == ColumnRole.PROPERTY]
         for dup in {p for p in used if used.count(p) > 1}:
             problems.append(f"Flera kolumner mappas mot samma egenskap '{dup}'.")

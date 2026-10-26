@@ -3,7 +3,6 @@
   "type": "collection",
   "entry": [
     {
-      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_0001",
       "resource": {
         "resourceType": "CodeSystem",
         "id": "KV-EX-0001",
@@ -18,8 +17,10 @@
         "name": "KV_EX_0001",
         "title": "Typ av underlag",
         "status": "draft",
-        "date": "2026-10-23",
+        "experimental": false,
+        "date": "2026-01-01",
         "publisher": "Exempelmyndigheten",
+        "description": "Typ av underlag.",
         "language": "sv",
         "caseSensitive": true,
         "content": "complete",
@@ -161,7 +162,6 @@
       }
     },
     {
-      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_0002",
       "resource": {
         "resourceType": "CodeSystem",
         "id": "KV-EX-0002",
@@ -170,8 +170,10 @@
         "name": "KV_EX_0002",
         "title": "Typ av sysselsättning",
         "status": "draft",
-        "date": "2026-10-23",
+        "experimental": false,
+        "date": "2026-01-01",
         "publisher": "Exempelmyndigheten",
+        "description": "Typ av sysselsättning.",
         "language": "sv",
         "caseSensitive": true,
         "content": "complete",
@@ -253,7 +255,6 @@
       }
     },
     {
-      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_0003",
       "resource": {
         "resourceType": "CodeSystem",
         "id": "KV-EX-0003",
@@ -262,8 +263,10 @@
         "name": "KV_EX_0003",
         "title": "Grad",
         "status": "draft",
-        "date": "2026-10-23",
+        "experimental": false,
+        "date": "2026-01-01",
         "publisher": "Exempelmyndigheten",
+        "description": "Grad.",
         "language": "sv",
         "caseSensitive": true,
         "content": "complete",
@@ -303,7 +306,6 @@
       }
     },
     {
-      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_ANVANDS_AV",
       "resource": {
         "resourceType": "CodeSystem",
         "id": "KV-EX-ANVANDS-AV",
@@ -312,7 +314,9 @@
         "name": "KV_EX_ANVANDS_AV",
         "title": "Används av (KV_EX)",
         "status": "draft",
-        "date": "2026-10-23",
+        "experimental": false,
+        "date": "2026-01-01",
+        "publisher": "Exempelmyndigheten, enhet för kodverk",
         "description": "Användningskontexter som genererats från kolumnrubriker i källan.",
         "language": "sv",
         "caseSensitive": true,
@@ -335,7 +339,6 @@
       }
     },
     {
-      "fullUrl": "http://example.org/fhir/CodeSystem/KV_EX_TEXTROLL",
       "resource": {
         "resourceType": "CodeSystem",
         "id": "KV-EX-TEXTROLL",
@@ -344,7 +347,9 @@
         "name": "KV_EX_TEXTROLL",
         "title": "Textroller (KV_EX)",
         "status": "draft",
-        "date": "2026-10-23",
+        "experimental": false,
+        "date": "2026-01-01",
+        "publisher": "Exempelmyndigheten, enhet för kodverk",
         "description": "Designation-typer (textroller) som genererats från kolumnrubriker i källan.",
         "language": "sv",
         "caseSensitive": true,

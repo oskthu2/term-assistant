@@ -58,13 +58,18 @@
 </ul>
 </div>
 
+{% macro req(key) -%}
+{%- if key in settings.release_required_metadata -%}<span class="badge {{ 'ok' if tpl.codesystem[key] else 'warn' }}">krävs före release</span>{%- endif -%}
+{%- endmacro %}
 <h2>Metadata</h2>
 <form method="post" action="/p/{{ project.id }}/meta" class="panel">
   <div class="formgrid">
     <div><label>Projektnamn</label><input type="text" name="title" value="{{ project.title }}"></div>
     <div><label>{{ 'Bas-URL för kodverken' if tpl.source.sheets | length > 1 else 'Canonical URL' }}</label><input type="url" name="cs_url" value="{{ tpl.codesystem.url }}"></div>
     <div><label>Titel</label><input type="text" name="cs_title" value="{{ tpl.codesystem.title or '' }}"></div>
-    <div><label>Utgivare</label><input type="text" name="cs_publisher" value="{{ tpl.codesystem.publisher or '' }}"></div>
+    <div><label>Utgivare {{ req('publisher') }}</label><input type="text" name="cs_publisher" value="{{ tpl.codesystem.publisher or '' }}"></div>
+    <div><label>Kontakt</label><input type="text" name="cs_contact" value="{{ tpl.codesystem.contact or '' }}" placeholder="namn &lt;e-post&gt;"></div>
+    {% if tpl.source.sheets | length <= 1 %}<div><label>OID / identifierare</label><input type="text" name="cs_identifier" value="{{ tpl.codesystem.identifier or '' }}" placeholder="urn:oid:…"></div>{% endif %}
     <div><label>Språk</label><input type="text" name="cs_language" value="{{ tpl.codesystem.language }}"></div>
     <div><label>Namnrymd</label><select name="namespace">
       {% for ns in settings.namespaces %}<option value="{{ ns.key }}" {{ 'selected' if ns.key == tpl.namespace }}>{{ ns.label }}</option>{% endfor %}
@@ -74,8 +79,11 @@
   </div>
   <label>Licensvillkor (följer med i paketet)</label>
   <textarea name="license_note" placeholder="t.ex. SNOMED CT – nationell licens, får spridas inom Sverige">{{ tpl.license_note or '' }}</textarea>
-  <label>Beskrivning</label><textarea name="cs_description">{{ tpl.codesystem.description or '' }}</textarea>
+  <label>Beskrivning {{ req('description') }}</label><textarea name="cs_description">{{ tpl.codesystem.description or '' }}</textarea>
   <label>Syfte</label><textarea name="cs_purpose">{{ tpl.codesystem.purpose or '' }}</textarea>
+  <label>Upphovsrätt (blir CodeSystem/ValueSet.copyright)</label><textarea name="cs_copyright">{{ tpl.codesystem.copyright or '' }}</textarea>
+  {% if tpl.codesystem.sources %}<details class="small"><summary>Var metadata hämtades vid inläsningen</summary>
+    <ul>{% for k, src in tpl.codesystem.sources.items() %}<li>{{ (META_FIELDS | selectattr('key', 'equalto', k) | map(attribute='label') | first) or k }}: {{ src }}</li>{% endfor %}</ul></details>{% endif %}
   {% if tpl.source.sheets | length > 1 %}
   <h3>Kodverk i familjen</h3>
   <table>

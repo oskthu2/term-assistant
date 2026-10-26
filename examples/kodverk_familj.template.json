@@ -1,5 +1,5 @@
 {
-  "template_version": 2,
+  "template_version": 3,
   "kind": "codesystem",
   "codesystem": {
     "url": "http://example.org/fhir/CodeSystem",
@@ -8,7 +8,14 @@
     "version": "1.1.0",
     "publisher": "Exempelmyndigheten, enhet för kodverk",
     "language": "sv",
-    "case_sensitive": true
+    "case_sensitive": true,
+    "sources": {
+      "publisher": "fliken 'Inledning' (Dokumentägare)",
+      "version": "revisionshistoriken",
+      "name": "familjens gemensamma prefix",
+      "title": "familjens gemensamma prefix",
+      "url": "vald namnrymd"
+    }
   },
   "source": {
     "file": "examples/kodverk_familj.xlsx",
