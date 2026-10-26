@@ -162,6 +162,18 @@ def test_release_flow_and_diff(workbook):
     assert d["changed"] == [{"code": "A", "fields": ["display"]}]
 
 
+def test_release_retargets_references_to_the_candidate_version():
+    cm = {"resourceType": "ConceptMap", "version": "2.2.0-rc.1", "status": "draft",
+          "sourceCanonical": "http://x/vs|2.2.0-rc.1",
+          "group": [{"source": "http://x/cs", "sourceVersion": "2.2.0-rc.1", "targetVersion": "2.2.0-rc.1",
+                     "element": [{"code": "2.2.0-rc.1", "target": [{"code": "B"}]}]}]}
+    released = release(cm)
+    group = released["group"][0]
+    assert (released["version"], group["sourceVersion"], group["targetVersion"]) == ("2.2.0",) * 3
+    assert released["sourceCanonical"] == "http://x/vs|2.2.0"
+    assert group["element"][0]["code"] == "2.2.0-rc.1"  # koder rörs inte
+
+
 def test_negation_is_never_a_match():
     from term_assistant.importer.registry import is_negation
     assert is_negation("aktiv", "inaktiv")

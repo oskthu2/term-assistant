@@ -43,9 +43,22 @@ def release(candidate: dict[str, Any]) -> dict[str, Any]:
     m = _RC.match(candidate.get("version", ""))
     if not m:
         raise ValueError("Releasekandidaten saknar giltig version")
-    released = copy.deepcopy(candidate)
+    released = _retarget(copy.deepcopy(candidate), candidate["version"], m["base"])
     released.update(version=m["base"], status="active", date=date.today().isoformat(), experimental=False)
     return released
+
+
+def _retarget(value: Any, rc_version: str, base: str) -> Any:
+    """Byt referenser till kandidatversionen mot releaseversionen, t.ex. ConceptMap.group.sourceVersion
+    och kanoniska referenser 'url|1.2.0-rc.1'. Kandidaterna byggs tillsammans, så de har samma version."""
+    if isinstance(value, dict):
+        return {k: (base if isinstance(v, str) and v == rc_version and k.lower().endswith("version")
+                    else _retarget(v, rc_version, base)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_retarget(v, rc_version, base) for v in value]
+    if isinstance(value, str) and value.endswith(f"|{rc_version}"):
+        return value[: -len(rc_version)] + base
+    return value
 
 
 def diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
