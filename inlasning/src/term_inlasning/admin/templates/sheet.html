@@ -7,8 +7,13 @@
 <div class="toolbar">
   <input type="search" id="filter" placeholder="Filtrera …" aria-label="Filtrera rader">
   <span class="small muted"><span id="count">{{ data.rows | length }}</span> av {{ data.rows | length }} rader</span>
+  {% if tpl.kind == 'supplement' %}
+  {% set text_col = (tpl.columns | selectattr('role', 'equalto', ColumnRole.TRANSLATION) | first).source_column %}
+  <span class="badge {{ 'ok' if (data.rows | rejectattr(text_col) | list | length) == 0 else 'warn' }}">{{ data.rows | selectattr(text_col) | list | length }} av {{ data.rows | length }} översatta</span>
+  {% else %}
   <a class="button" href="/p/{{ project.id }}/s/{{ quote(sheet) }}/new">{{ 'Ny mappning' if tpl.kind == 'conceptmap' else 'Nytt begrepp' }}</a>
-  {% if tpl.kind != 'conceptmap' %}
+  {% endif %}
+  {% if tpl.kind not in ('conceptmap', 'supplement') %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/ai" class="inline"
         onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'AI granskar …'">
     <button type="submit" class="secondary" title="Claude föreslår rättelser; förslagen granskas innan de förs in">AI-granskning</button></form>

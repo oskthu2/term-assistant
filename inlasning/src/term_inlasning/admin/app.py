@@ -30,7 +30,7 @@ from ..config import ServerConfig, fhir_version
 from ..importer.mapping import ColumnRole
 from ..importer.plan import ImportPlan, plan_import
 from ..importer.registry import PropertyRegistry
-from ..importer import conceptmap, lifecycle, metadata
+from ..importer import conceptmap, lifecycle, metadata, supplement
 from ..importer.replacements import RELATIONS
 from ..importer.suggest import MappingProposal
 from ..importer.workbook import read_workbook
@@ -64,7 +64,8 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
     env.globals.update(ROLE_LABELS=ops.ROLE_LABELS, is_retired=ops.is_retired, LIFECYCLE=lifecycle.FIELDS,
                        META_FIELDS=metadata.FIELDS, RELATION_LABELS=conceptmap.LABELS,
                        KIND_LABELS={"codesystem": "kodverk → CodeSystem", "valueset": "urval → ValueSet",
-                                    "conceptmap": "mappning → ConceptMap"}, ColumnRole=ColumnRole, quote=quote, RELATIONS=RELATIONS,
+                                    "conceptmap": "mappning → ConceptMap",
+                                    "supplement": "översättning → CodeSystem-supplement"}, ColumnRole=ColumnRole, quote=quote, RELATIONS=RELATIONS,
                        tx_url=lambda: ServerConfig.from_env().base_url, fhir_version=fhir_version,
                        publish_enabled=lambda: os.environ.get("TX_PUBLISH") == "1",
                        validator_enabled=lambda: bool(os.environ.get("FHIR_VALIDATOR_JAR")),
@@ -654,6 +655,19 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         if project is None:
             return not_found(request, "Projektet")
         use_server = (await request.form()).get("server") != "nej"
+        if project.template.kind == "supplement":
+            try:
+                async with tx_client() as client:
+                    result = await ops.check_translation(project, data, client)
+            except Exception as exc:
+                return redirect(f"/p/{project.id}", f"Terminologitjänsten kunde inte nås: {exc}")
+            ws.save(project, author=author(request), action="Översättningen kontrollerad",
+                    detail={"flaggade": result["flags"], "nya koder": len(result["new_codes"])})
+            msg = (f"{result['codes']} koder i kodsystemet, {result['untranslated']} rader saknar översättning, "
+                   f"{result['flags']} rader behöver hanteras.")
+            if result["new_codes"]:
+                msg += f" {len(result['new_codes'])} nya koder i kodsystemet – hämta dem från projektets översikt."
+            return redirect(sheet_url(project, supplement.SHEET), msg)
         if project.template.kind == "conceptmap":
             try:
                 async with tx_client() as client:
@@ -745,6 +759,65 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         return redirect(sheet_url(project, conceptmap.SHEET),
                         f"Mappningsprojektet är skapat med {len(rows)} källkoder att mappa.")
 
+    async def translation_new(request: Request, errors=None, form=None, status=200):
+        return render(request, "translation_new.html", status=status, errors=errors or [], form=form or {},
+                      tx=ServerConfig.from_env().base_url)
+
+    async def translation_create(request: Request):
+        form = dict(await request.form())
+        cfg = settings()
+        codesystem = (form.get("codesystem") or "").strip()
+        language = (form.get("language") or "").strip()
+        errors = []
+        if not codesystem:
+            errors.append("Ange kodsystemet som ska översättas.")
+        if not supplement.LANGUAGE.match(language):
+            errors.append(f"'{language}' är ingen språkkod (BCP-47, t.ex. sv, en, nb).")
+        if errors:
+            return await translation_new(request, errors, form, 400)
+        try:
+            async with tx_client() as client:
+                base = await client.read_canonical("CodeSystem", codesystem)
+                if base is None:
+                    raise ops.OpError(f"Kodsystemet {codesystem} finns inte på terminologitjänsten.")
+                codes = await ops.codesystem_codes(client, codesystem)
+        except ops.OpError as exc:
+            return await translation_new(request, exc.messages, form, 400)
+        except Exception as exc:  # nätverk m.m.
+            return await translation_new(request, [f"Terminologitjänsten kunde inte nås: {exc}"], form, 502)
+        from ..importer.mapping import CodeSystemMeta, TranslationSpec
+        from ..importer.transform import _ascii
+        base_title = base.get("title") or base.get("name") or codesystem
+        title = (form.get("title") or "").strip() or f"{base_title} ({language})"
+        name = re.sub(r"[^A-Za-z0-9]+", "_", _ascii(f"{base.get('name') or base_title}_{language}")).strip("_")
+        ns = cfg.namespace(form.get("namespace"))
+        url_base = (ns.base_url if ns else "http://example.org/fhir").rstrip("/")
+        meta = CodeSystemMeta(url=f"{url_base}/CodeSystem/{name}", name=name, title=title, language=language,
+                              description=(form.get("description") or "").strip() or None,
+                              case_sensitive=base.get("caseSensitive", True), sources={"url": "vald namnrymd"})
+        spec = TranslationSpec(codesystem=codesystem, codesystem_title=base_title,
+                               origin="skapad i administrationsverktyget")
+        tpl = supplement.template(meta, spec)
+        project = ops.create_translation_project(ws, title, meta, spec, supplement.rows(tpl, codes), author(request),
+                                                 namespace=ns,
+                                                 classification=cfg.classification(form.get("classification")).key)
+        return redirect(sheet_url(project, supplement.SHEET), f"Översättningsprojektet är skapat med {len(codes)} koder.")
+
+    async def fetch_new_codes(request: Request):
+        project, data = load(request.path_params["pid"])
+        if project is None or project.template.kind != "supplement":
+            return not_found(request, "Översättningsprojektet")
+        try:
+            async with tx_client() as client:
+                added = await ops.add_missing_codes(project, data, client)
+        except Exception as exc:
+            return redirect(f"/p/{project.id}", f"Terminologitjänsten kunde inte nås: {exc}")
+        if added:
+            ws.save(project, data, author=author(request), action="Nya koder hämtade från kodsystemet",
+                    detail={"koder": added})
+        return redirect(sheet_url(project, supplement.SHEET),
+                        f"{len(added)} nya koder lades till." if added else "Inga nya koder i kodsystemet.")
+
     async def tx_proposals(request: Request):
         """Förslag (urval, mappningar, översättningar) som MCP-servern skapat på terminologitjänsten."""
         found, error = [], None
@@ -770,9 +843,17 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             if resource is None:
                 raise ops.OpError(f"{rtype}/{rid} finns inte längre på terminologitjänsten.")
             title = (form.get("title") or resource.get("title") or resource.get("name") or rid).strip()
+            base_codes = None
+            if resource.get("content") == "supplement" and resource.get("supplements"):
+                try:  # alla koder i kodsystemet, så att även oöversatta koder får en rad
+                    async with tx_client() as client:
+                        base_codes = await ops.codesystem_codes(client, resource["supplements"].split("|")[0])
+                except Exception:  # noqa: BLE001 – då blir det bara de översatta koderna
+                    base_codes = None
             project = ops.project_from_resource(ws, resource, title, author(request),
                                                 namespace=cfg.namespace(form.get("namespace")),
-                                                classification=cfg.classification(form.get("classification")).key)
+                                                classification=cfg.classification(form.get("classification")).key,
+                                                base_codes=base_codes)
         except ops.OpError as exc:
             return redirect("/tx-forslag", "; ".join(exc.messages))
         return redirect(f"/p/{project.id}", "Förslaget är taget in som projekt. Granska det innan release.")
@@ -835,6 +916,9 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         Route("/import/{uid}/create/{i:int}", import_create, methods=["POST"]),
         Route("/mappning/ny", mapping_new, methods=["GET"]),
         Route("/mappning/ny", mapping_create, methods=["POST"]),
+        Route("/oversattning/ny", translation_new, methods=["GET"]),
+        Route("/oversattning/ny", translation_create, methods=["POST"]),
+        Route("/p/{pid}/hamta-koder", fetch_new_codes, methods=["POST"]),
         Route("/tx-forslag", tx_proposals, methods=["GET"]),
         Route("/tx-forslag/ta-in", tx_proposal_take, methods=["POST"]),
         Route("/p/{pid}/sok", code_search),

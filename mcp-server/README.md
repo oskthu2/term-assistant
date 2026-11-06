@@ -68,7 +68,7 @@ MCP-servern kan inte ändra granskat innehåll, bara skapa **förslag**:
   kodsystemets ägare.
 
 Förslagen granskas i administrationsverktyget (**Förslag från terminologitjänsten**). Där tas
-mappningar och urval in som projekt. När den granskade versionen publiceras till
+urval, mappningar och översättningar in som projekt. När den granskade versionen publiceras till
 terminologitjänsten ersätter den förslaget.
 
 Fel från terminologitjänsten kommer fram till modellen som verktygsfel med

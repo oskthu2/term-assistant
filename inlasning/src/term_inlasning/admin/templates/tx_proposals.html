@@ -20,8 +20,7 @@ genom den vanliga redaktionella kedjan. Förslaget på terminologitjänsten änd
     <td class="small">{% if r.resourceType == 'CodeSystem' %}{{ r.language }} · översätter <span class="mono">{{ r.supplements }}</span>{% elif r.resourceType == 'ConceptMap' %}{% for g in r.group or [] %}<span class="mono">{{ g.source }}</span> → <span class="mono">{{ g.target }}</span>{% endfor %}{% endif %}</td>
     <td class="small muted">{{ r.date or '' }}</td>
     <td>
-      {% if r.resourceType == 'CodeSystem' %}<span class="small muted">Översättningar granskas på terminologitjänsten</span>
-      {% elif origin in taken %}<span class="badge ok">taget in</span>
+      {% if origin in taken %}<span class="badge ok">taget in</span>
       {% else %}
       <form method="post" action="/tx-forslag/ta-in" class="inline">
         <input type="hidden" name="type" value="{{ r.resourceType }}"><input type="hidden" name="id" value="{{ r.id }}">

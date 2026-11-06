@@ -27,7 +27,7 @@ from ..importer.mapping import (
     PropertyDefinition,
     UiHints,
 )
-from ..importer import conceptmap, lifecycle, metadata
+from ..importer import conceptmap, lifecycle, metadata, supplement
 from ..importer.registry import PropertyRegistry
 from ..importer.package import build_package, label_resources, package_manifest
 from ..importer.release import bump, check_policy, diff, release as to_release
@@ -60,6 +60,8 @@ ROLE_LABELS = {
     ColumnRole.MAP_TARGET: "Målkod",
     ColumnRole.MAP_TARGET_DISPLAY: "Målkodens text",
     ColumnRole.MAP_RELATION: "Relation (ConceptMap)",
+    ColumnRole.ORIGINAL_DISPLAY: "Kodsystemets text",
+    ColumnRole.TRANSLATION: "Översättning",
     ColumnRole.IGNORE: "Ignoreras",
 }
 CS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.DEFINITION, ColumnRole.DESIGNATION, ColumnRole.PROPERTY,
@@ -68,6 +70,8 @@ VS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.SYSTEM, ColumnRole.S
             ColumnRole.RULE, ColumnRole.COMMENT, ColumnRole.GROUP, ColumnRole.LIFECYCLE, ColumnRole.IGNORE]
 MAP_ROLES = [ColumnRole.CODE, ColumnRole.MAP_SOURCE, ColumnRole.MAP_SOURCE_DISPLAY, ColumnRole.MAP_RELATION,
              ColumnRole.MAP_TARGET, ColumnRole.MAP_TARGET_DISPLAY, ColumnRole.COMMENT, ColumnRole.IGNORE]
+SUPPLEMENT_ROLES = [ColumnRole.CODE, ColumnRole.ORIGINAL_DISPLAY, ColumnRole.TRANSLATION, ColumnRole.COMMENT,
+                    ColumnRole.IGNORE]
 PROPERTY_TYPES = ["string", "code", "boolean", "integer", "decimal", "dateTime", "Coding"]
 _CODE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_\-]*$")
 
@@ -276,7 +280,7 @@ def _stamp(tpl: ImportTemplate, row: dict, changes: dict, is_new: bool) -> None:
 
 
 def roles_for(tpl: ImportTemplate) -> list[ColumnRole]:
-    return {"valueset": VS_ROLES, "conceptmap": MAP_ROLES}.get(tpl.kind, CS_ROLES)
+    return {"valueset": VS_ROLES, "conceptmap": MAP_ROLES, "supplement": SUPPLEMENT_ROLES}.get(tpl.kind, CS_ROLES)
 
 
 def property_choices(tpl: ImportTemplate, registry: PropertyRegistry) -> list[PropertyDefinition]:
@@ -1154,8 +1158,70 @@ async def check_mapping(project: Project, data: dict[str, SheetData], client) ->
     return {"flags": len(flags), "unmapped": unmapped, "checked": len(pairs)}
 
 
+# -- översättningar (CodeSystem-supplement) --------------------------------------------------------
+
+
+async def codesystem_codes(client, url: str, limit: int = 5000) -> list[dict]:
+    """Alla koder ({code, display}) i ett kodsystem på terminologitjänsten, via implicit ValueSet."""
+    implicit = {"resourceType": "ValueSet", "compose": {"include": [{"system": url}]}}
+    result = await client.expand(valueset=implicit, count=limit)
+    return [{"code": c["code"], "display": c.get("display")} for c in result["contains"]]
+
+
+def create_translation_project(ws: Workspace, title: str, meta, spec, rows: list[dict], author: str,
+                               namespace: Namespace | None = None, classification: str | None = None,
+                               questions: list[str] | None = None, source: str | None = None) -> Project:
+    tpl = supplement.template(meta, spec)
+    if namespace:
+        tpl.namespace = namespace.key
+        tpl.codesystem.publisher = tpl.codesystem.publisher or namespace.publisher
+    tpl.classification = classification
+    tpl.source.file = source
+    data = {supplement.SHEET: SheetData(headers=[c.source_column for c in tpl.columns], rows=rows)}
+    project = Project(id=ws.new_id(title), title=title, template=tpl, source_file=source,
+                      questions=[Question(text=q) for q in questions or []])
+    ws.save(project, data, author=author, action="Översättningsprojekt skapat",
+            detail={"kodsystem": spec.codesystem, "språk": meta.language, "rader": len(rows), "ursprung": source})
+    return project
+
+
+async def check_translation(project: Project, data: dict[str, SheetData], client) -> dict:
+    """Jämför raderna med kodsystemet: koder som inte (längre) finns där, ändrad originaltext och nya koder."""
+    tpl = project.template
+    sheet = next(iter(data))
+    code_col = tpl.column(ColumnRole.CODE).source_column
+    orig_col = tpl.column(ColumnRole.ORIGINAL_DISPLAY).source_column
+    text_col = tpl.column(ColumnRole.TRANSLATION).source_column
+    base = {c["code"]: c.get("display") for c in await codesystem_codes(client, tpl.translation.codesystem)}
+    flags: dict[str, Flag] = {}
+    for row in data[sheet].rows:
+        code = str(row.get(code_col))
+        if code not in base:
+            flags[code] = Flag(status="okänd", message=f"Koden finns inte i {tpl.translation.codesystem}")
+        elif base[code] and row.get(orig_col) and base[code] != row.get(orig_col):
+            flags[code] = Flag(status="text", server_display=base[code],
+                               message="Kodsystemets text har ändrats sedan översättningen – kontrollera den")
+    present = {str(r.get(code_col)) for r in data[sheet].rows}
+    new = [c for c in base if c not in present]
+    untranslated = sum(1 for r in data[sheet].rows if not str(r.get(text_col) or "").strip())
+    project.flags = {sheet: flags} if flags else {}
+    return {"flags": len(flags), "new_codes": new, "untranslated": untranslated, "codes": len(base)}
+
+
+async def add_missing_codes(project: Project, data: dict[str, SheetData], client) -> list[str]:
+    """Lägg till rader för koder som finns i kodsystemet men inte i projektet (t.ex. nya koder)."""
+    tpl = project.template
+    sheet = next(iter(data))
+    code_col = tpl.column(ColumnRole.CODE).source_column
+    present = {str(r.get(code_col)) for r in data[sheet].rows}
+    new = [c for c in await codesystem_codes(client, tpl.translation.codesystem) if c["code"] not in present]
+    data[sheet].rows.extend(supplement.rows(tpl, new))
+    return [c["code"] for c in new]
+
+
 def project_from_resource(ws: Workspace, resource: dict, title: str, author: str,
-                          namespace: Namespace | None = None, classification: str | None = None) -> Project:
+                          namespace: Namespace | None = None, classification: str | None = None,
+                          base_codes: list[dict] | None = None) -> Project:
     """Ta in ett förslag (eller annan resurs) från terminologitjänsten som projekt att granska och förvalta."""
     from ..importer.external import resolve_system_name
     from ..importer.mapping import CodeSystemMeta, SourceInfo
@@ -1175,6 +1241,23 @@ def project_from_resource(ws: Workspace, resource: dict, title: str, author: str
                                          questions=notes + ["Taget in från ett förslag (AI-stött) – granska varje "
                                                             "mappning innan release."], source=origin)
         return project
+    if resource["resourceType"] == "CodeSystem":
+        if resource.get("content") != "supplement" or not resource.get("supplements"):
+            raise OpError("Bara översättningar (CodeSystem-supplement) kan tas in härifrån.")
+        from ..importer.mapping import TranslationSpec
+        url, _, version = resource["supplements"].partition("|")
+        meta.language = resource.get("language") or meta.language
+        spec = TranslationSpec(codesystem=url, codesystem_version=version or None, origin=origin)
+        tpl = supplement.template(meta, spec)
+        translations = supplement.translations_from_supplement(resource)
+        codes = base_codes if base_codes else [{"code": c} for c in translations]
+        unknown = sorted(set(translations) - {c["code"] for c in codes})
+        notes = ["Taget in från ett förslag (AI-stött) – granska varje översättning innan release."]
+        if unknown:
+            notes.append(f"{len(unknown)} översatta koder finns inte i kodsystemet: {', '.join(unknown[:10])}")
+            codes = codes + [{"code": c} for c in unknown]
+        return create_translation_project(ws, title, meta, spec, supplement.rows(tpl, codes, translations), author,
+                                          namespace, classification, questions=notes, source=origin)
     if resource["resourceType"] != "ValueSet":
         raise OpError(f"{resource['resourceType']} kan inte tas in som projekt ännu.")
     includes = [i for i in resource.get("compose", {}).get("include", []) if i.get("system")]

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Ny översättning{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Projekt</a> › Ny översättning</div>
+<h1>Ny översättning</h1>
+<p class="muted">En översättning av ett kodsystem på terminologitjänsten <span class="mono">{{ tx }}</span> till ett
+annat språk. Den släpps som CodeSystem-supplement (som HL7 Sveriges språkpaket) och förvaltas som andra projekt:
+redaktionell kedja, kontroll mot kodsystemet och releaser. En rad läggs upp per kod.</p>
+<form method="post" class="panel">
+  <div class="formgrid">
+    <div><label for="codesystem">Kodsystem som översätts (canonical URL)</label>
+      <input type="url" id="codesystem" name="codesystem" value="{{ form.codesystem or '' }}" placeholder="http://hl7.no/fhir/CodeSystem/no-basis-family-relation" required></div>
+    <div><label for="language">Språk (BCP-47)</label>
+      <input type="text" id="language" name="language" value="{{ form.language or 'sv' }}" required></div>
+    <div><label for="title">Namn <span class="small muted">(valfritt)</span></label>
+      <input type="text" id="title" name="title" value="{{ form.title or '' }}" placeholder="t.ex. Familjerelationer (sv)"></div>
+  </div>
+  <label for="description">Beskrivning <span class="small muted">(krävs före release)</span></label>
+  <textarea id="description" name="description" rows="2">{{ form.description or '' }}</textarea>
+  <div class="formgrid">
+    <div><label for="namespace">Namnrymd</label><select id="namespace" name="namespace">
+      {% for ns in settings.namespaces %}<option value="{{ ns.key }}" {{ 'selected' if form.namespace == ns.key }}>{{ ns.label }}</option>{% endfor %}</select></div>
+    <div><label for="classification">Informationsklass</label><select id="classification" name="classification">
+      {% for c in settings.classifications %}<option value="{{ c.key }}" {{ 'selected' if (form.classification or settings.default_classification) == c.key }}>{{ c.label }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="actions"><button type="submit">Skapa översättningsprojekt</button></div>
+</form>
+{% endblock %}

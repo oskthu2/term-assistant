@@ -99,13 +99,28 @@ kan ha flera mål.
 - **Release:** redaktionell kedja, fyra ögon och paket fungerar som för andra projekt. När en
   release som ersätter ett förslag publiceras till terminologitjänsten tas förslagstaggen bort.
 
+### Översättningar (CodeSystem-supplement)
+
+Ett översättningsprojekt har en rad per kod i kodsystemet som översätts: koden och
+kodsystemets egen text, som är låsta, samt översättningen och en kommentar.
+
+- **Skapa:** **Ny översättning** utgår från ett kodsystem på terminologitjänsten och ett språk
+  (BCP-47, t.ex. `sv`), och lägger upp en rad per kod. Ett översättningsförslag från MCP-servern
+  kan också tas in, och då får även oöversatta koder en rad.
+- **Release:** blir ett CodeSystem-supplement i samma form som HL7 Sveriges språkpaket
+  (`content = supplement`, `supplements`, `language`, översättningen som `display` och
+  `designation`). Koder utan översättning tas inte med.
+- **Kontrollera översättningen:** hittar koder som inte finns i kodsystemet och originaltexter
+  som ändrats sedan översättningen, och räknar nya koder.
+- **Hämta nya koder:** lägger till rader för koder som tillkommit i kodsystemet.
+- **Status:** sidan visar hur många koder som är översatta.
+
 ### Förslag från terminologitjänsten
 
 **Förslag från terminologitjänsten** listar utkast som MCP-servern har skapat, taggade
 `urn:term-assistant:arbetsflode#forslag`:
 
-- **Mappningar och urval** tas in som projekt.
-- **Översättningar** (CodeSystem-supplement) visas, men granskas än så länge på terminologitjänsten.
+- **Mappningar, urval och översättningar** tas in som projekt.
 
 Publicering till terminologitjänsten kräver `TX_PUBLISH=1`.
 

@@ -102,8 +102,12 @@ Arbetsfördelningen mellan komponenterna följer den redaktionella kedjan:
   `$expand` med filter. Relationerna anges på svenska och översätts till R4 `equivalence` eller R5
   `relationship`/`noMap`. Kravet i R4 på kommentar för smalare och inexakta mappningar stoppar
   releasekandidaten.
-* **Översättningar** granskas än så länge bara på terminologitjänsten. Administrationsverktyget
-  visar dem men tar inte in dem som projekt. Ett projekt för supplement är nästa steg.
+* **Översättningsprojekt** (`kind = supplement`) har en rad per kod i kodsystemet. Koden och
+  originaltexten är låsta, översättningen redigeras. Releasen blir ett CodeSystem-supplement i
+  samma form som HL7 Sveriges språkpaket. Kontrollen mot kodsystemet hittar ändrade
+  originaltexter (översättningen kan behöva ses över) och nya koder, som kan hämtas in. Eftersom
+  HAPI inte använder supplement i `$lookup` läser MCP-servern dem själv och visar dem under
+  `translations`, med markering om de fortfarande är förslag.
 * **Webbgränssnittet** (`term-mcp-webb`) är gjort för demo. Varje samtal har en egen
   MCP-underprocess och en egen dialog, stegen strömmas med Server-Sent Events, och Claudes
   markdown renderas på servern med HTML i texten neutraliserad.

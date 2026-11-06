@@ -7,7 +7,7 @@ varandra bara via FHIR: terminologitjänstens API och FHIR-paket.
 
 | Komponent | Gör | Kommando |
 |---|---|---|
-| [**Inläsningstjänsten**](inlasning/README.md) | Administrationsverktyget. Läser in kodverk och urval från Excel, CSV eller PDF. Förvaltar kodverk, urval och mappningar (ConceptMap) med redaktionell kedja och releaser, granskar förslag från MCP-servern och publicerar releaser som FHIR-paket eller till terminologitjänsten | `term-inlasning` |
+| [**Inläsningstjänsten**](inlasning/README.md) | Administrationsverktyget. Läser in kodverk och urval från Excel, CSV eller PDF. Förvaltar kodverk, urval, mappningar (ConceptMap) och översättningar (CodeSystem-supplement) med redaktionell kedja och releaser, granskar förslag från MCP-servern och publicerar releaser som FHIR-paket eller till terminologitjänsten | `term-inlasning` |
 | [**MCP-servern**](mcp-server/README.md) | Terminologiverktyg för AI-assistenter framför valfri FHIR-terminologitjänst. Kan skapa *förslag* på urval, mappningar och översättningar. Har ett webbgränssnitt och en terminalklient där Claude utför instruktioner på svenska | `term-mcp`, `term-mcp-webb`, `term-mcp-demo` |
 | [**Paketbyggaren**](paketbyggare/README.md) | Bygger versionerade terminologipaket från tx-nordics och inläsningstjänstens releaser, som schemalagt jobb, och grundladdar terminologitjänster | `term-paket` |
 
@@ -67,8 +67,11 @@ Designen beskrivs i [docs/arkitektur.md](docs/arkitektur.md).
    Den granskade versionen ersätter då förslaget på HAPI, och assistenten använder den direkt:
    "Översätt den norska koden gift till HL7 v3."
 
-   Mappningar kan också skapas direkt i verktyget med **Ny mappning**: välj källa (ValueSet eller
-   CodeSystem) och målkodsystem, så läggs en rad upp per källkod.
+   Översättningsförslag tas in på samma sätt. Översätt de koder som saknas, släpp och publicera.
+   Därefter visar assistenten den svenska texten: "Vad heter søsken på svenska?".
+
+   Mappningar och översättningar kan också skapas direkt i verktyget med **Ny mappning** och
+   **Ny översättning**. Då läggs en rad upp per käll- respektive kod.
 
 7. **Egna kodverk från Excel.** Läs in `inlasning/examples/eget_kodverk.xlsx` och publicera releasen
    till **Paketkatalog**. Bygg sedan paketet och ladda om mock-tjänsten:

@@ -21,6 +21,12 @@ def build_all(template: ImportTemplate, sheets: list[Sheet]) -> tuple[list[dict[
     warnings: list[str] = []
     resources: list[dict[str, Any]] = []
 
+    if template.kind == "supplement":
+        from .supplement import build_supplement
+        sheet = by_name.get(template.source.sheet) or sheets[0]
+        cs, warnings = build_supplement(template, sheet.rows)
+        return [cs], warnings
+
     if template.kind == "conceptmap":
         from ..config import fhir_version
         from .conceptmap import build_conceptmap

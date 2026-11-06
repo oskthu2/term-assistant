@@ -57,7 +57,7 @@
   <h3>Behöver hanteras: <span class="badge bad">{{ flag.status }}</span></h3>
   <p class="small">{{ flag.message }}{% if flag.server_display %} · namn i kodsystemet: {{ flag.server_display }}{% endif %}
     <span class="muted">(kontrollerad {{ flag.checked[:16].replace('T', ' ') }})</span></p>
-  {% if tpl.kind != 'conceptmap' %}{% for s in flag.suggestions %}
+  {% if tpl.kind not in ('conceptmap', 'supplement') %}{% for s in flag.suggestions %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/replace" class="actions">
     <input type="hidden" name="new_code" value="{{ s.code }}"><input type="hidden" name="display" value="{{ s.display or '' }}">
     <input type="hidden" name="source" value="{{ s.source }}">
@@ -99,7 +99,7 @@
 </div>
 {% elif not is_new %}
 <div class="panel">
-  <h3>{{ 'Ta bort mappningen' if tpl.kind == 'conceptmap' else 'Ta bort ur urvalet' }}</h3>
+  <h3>{{ {'conceptmap': 'Ta bort mappningen', 'supplement': 'Ta bort raden'}.get(tpl.kind, 'Ta bort ur urvalet') }}</h3>
   {% if deletable %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/delete" class="inline"
         onsubmit="return confirm('Ta bort?')"><button type="submit" class="danger">Ta bort</button></form>

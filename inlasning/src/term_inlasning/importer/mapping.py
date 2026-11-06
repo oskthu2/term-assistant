@@ -47,6 +47,9 @@ class ColumnRole(str, Enum):
     MAP_TARGET = "map_target"                  # målkod
     MAP_TARGET_DISPLAY = "map_target_display"  # målkodens text
     MAP_RELATION = "map_relation"              # likvärdig, målet är bredare/smalare, närliggande, ingen motsvarighet
+    # Översättning (CodeSystem-supplement), se supplement.py
+    ORIGINAL_DISPLAY = "original_display"      # kodsystemets egen text (referens, exporteras inte)
+    TRANSLATION = "translation"                # översatt text -> concept.display + designation på målspråket
     IGNORE = "ignore"            # Läses inte in
 
 
@@ -203,11 +206,20 @@ class MappingSpec(BaseModel):
     origin: str | None = Field(None, description="Varifrån projektet kom, t.ex. ett förslag på terminologitjänsten")
 
 
+class TranslationSpec(BaseModel):
+    """För översättningsprojekt: vilket kodsystem som översätts (språket står i codesystem.language)."""
+
+    codesystem: str = Field(description="Canonical URL för kodsystemet som översätts (CodeSystem.supplements)")
+    codesystem_version: str | None = None
+    codesystem_title: str | None = None
+    origin: str | None = None
+
+
 class ImportTemplate(BaseModel):
     """Inläsningsmall och tillika specifikation för administrationsvyn."""
 
     template_version: int = 3
-    kind: Literal["codesystem", "valueset", "conceptmap"] = "codesystem"
+    kind: Literal["codesystem", "valueset", "conceptmap", "supplement"] = "codesystem"
     codesystem: CodeSystemMeta
     source: SourceInfo = SourceInfo()
     columns: list[ColumnMapping]
@@ -222,6 +234,7 @@ class ImportTemplate(BaseModel):
     classification: str | None = Field(None, description="Informationsklass, t.ex. 'öppen' eller 'intern'")
     license_note: str | None = Field(None, description="Licensvillkor som följer med paketet")
     mapping: MappingSpec | None = Field(None, description="När kind=conceptmap")
+    translation: TranslationSpec | None = Field(None, description="När kind=supplement")
     snomed_module: str | None = Field(None, description="SNOMED CT-utgåva (modul-id) för versioner angivna som "
                                                         "datum, t.ex. 45991000052106 (Sverige)")
 
@@ -251,6 +264,12 @@ class ImportTemplate(BaseModel):
         codes = [c for c in self.columns if c.role == ColumnRole.CODE]
         if len(codes) != 1:
             problems.append(f"Mallen måste ha exakt en kodkolumn, har {len(codes)}.")
+        if self.kind == "supplement":
+            if self.translation is None or not self.translation.codesystem:
+                problems.append("Översättningen saknar kodsystemet som översätts.")
+            if sum(c.role == ColumnRole.TRANSLATION for c in self.columns) != 1:
+                problems.append("Översättningen behöver exakt en kolumn för översatt text.")
+            return problems
         if self.kind == "conceptmap":
             if self.mapping is None or not self.mapping.source_system or not self.mapping.target_system:
                 problems.append("Mappningen saknar käll- eller målkodsystem.")
