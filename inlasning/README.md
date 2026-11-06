@@ -170,8 +170,8 @@ Ett mappningsprojekt har en rad per mappning: källkod, relation, målkod och ko
 kan ha flera mål.
 
 - **Skapa:** **Ny mappning** utgår från en källa (ValueSet eller CodeSystem) och ett målkodsystem
-  på terminologitjänsten, och lägger upp en rad per källkod. Ett förslag från MCP-servern kan
-  också tas in via **Förslag från terminologitjänsten**.
+  på terminologitjänsten, och lägger upp en rad per källkod. Ett utkast från MCP-servern kan
+  också tas in via **Förslag och utkast**.
 - **Redigera:** kodfälten söker i käll- eller målkodsystemet medan du skriver, och den valda
   kodens text fylls i.
 - **Relationer:** likvärdig, målet är bredare, målet är smalare, närliggande och ingen
@@ -179,8 +179,9 @@ kan ha flera mål.
   och "närliggande" kräver kommentar, och saknas den stoppas releasekandidaten.
 - **Kontrollera mappningen:** kontrollerar käll- och målkoder mot terminologitjänsten (okända,
   inaktiva, avvikande text) och listar källkoder som saknar mappning.
-- **Release:** redaktionell kedja, fyra ögon och paket fungerar som för andra projekt. När en
-  release som ersätter ett förslag publiceras till terminologitjänsten tas förslagstaggen bort.
+- **Release:** redaktionell kedja, fyra ögon och paket fungerar som för andra projekt. Om ett
+  utkast med samma id ligger på terminologitjänsten ersätts det vid publicering, och
+  förslagstaggen tas bort.
 
 ### Översättningar (CodeSystem-supplement)
 
@@ -188,7 +189,7 @@ Ett översättningsprojekt har en rad per kod i kodsystemet som översätts: kod
 kodsystemets egen text, som är låsta, samt översättningen och en kommentar.
 
 - **Skapa:** **Ny översättning** utgår från ett kodsystem på terminologitjänsten och ett språk
-  (BCP-47, t.ex. `sv`), och lägger upp en rad per kod. Ett översättningsförslag från MCP-servern
+  (BCP-47, t.ex. `sv`), och lägger upp en rad per kod. Ett översättningsutkast från MCP-servern
   kan också tas in, och då får även oöversatta koder en rad.
 - **Release:** blir ett CodeSystem-supplement i samma form som HL7 Sveriges språkpaket
   (`content = supplement`, `supplements`, `language`, översättningen som `display` och
@@ -198,12 +199,20 @@ kodsystemets egen text, som är låsta, samt översättningen och en kommentar.
 - **Hämta nya koder:** lägger till rader för koder som tillkommit i kodsystemet.
 - **Status:** sidan visar hur många koder som är översatta.
 
-### Förslag från terminologitjänsten
+### Förslag och utkast
 
-**Förslag från terminologitjänsten** listar utkast som MCP-servern har skapat, taggade
-`urn:term-assistant:arbetsflode#forslag`:
+**Förslag och utkast** är startpunkten för urval, mappningar och översättningar som tagits fram
+med AI-stöd:
 
-- **Mappningar, urval och översättningar** tas in som projekt.
+- **Ta in fil:** en FHIR-Bundle (.json), en enskild resurs eller ett FHIR-paket (.tgz), till
+  exempel utkasten som hämtas från terminologiassistenten. Filen visas med en rad per resurs,
+  och urval (ValueSet), mappningar (ConceptMap) och översättningar (CodeSystem-supplement) tas
+  in som projekt. Ett ECL-urval tas in som kodlista ur utkastets expansion. Paket läses i minnet
+  med gränser för storlek och antal filer.
+- **På terminologitjänsten:** utkast som ligger på terminologitjänsten med förslagstaggen
+  `urn:term-assistant:arbetsflode#forslag` listas också och kan tas in.
+- En resurs som redan har tagits in visas som "taget in", oavsett om den kom från en fil eller
+  från tjänsten.
 
 Publicering till terminologitjänsten kräver `TX_PUBLISH=1`.
 

@@ -266,16 +266,6 @@ class TerminologyClient:
             raise TerminologyError(f"{response.status_code} {resource_type}/{rid}: {response.text[:300]}")
         return response.json()
 
-    async def delete(self, resource_type: str, rid: str) -> None:
-        await self._request("DELETE", f"{resource_type}/{rid}")
-
-    async def put_resource(self, resource: dict[str, Any]) -> dict[str, Any]:
-        """Skapa/uppdatera en resurs (bara via skrivverktygen, när TX_ALLOW_WRITE=1)."""
-        rtype, rid = resource["resourceType"], resource.get("id")
-        if rid:
-            return await self._request("PUT", f"{rtype}/{rid}", json=resource)
-        return await self._request("POST", rtype, json=resource)
-
 
 def _flatten(params: dict[str, Any]):
     for key, value in params.items():

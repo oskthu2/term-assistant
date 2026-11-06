@@ -1219,6 +1219,68 @@ async def add_missing_codes(project: Project, data: dict[str, SheetData], client
     return [c["code"] for c in new]
 
 
+FHIR_FILE_LIMIT = 20 * 1024 * 1024        # största fil (och största resurs i ett paket)
+FHIR_PACKAGE_TOTAL = 100 * 1024 * 1024    # största uppackade innehåll i ett paket
+FHIR_PACKAGE_FILES = 2000
+TAKE_IN_TYPES = ("ValueSet", "ConceptMap", "CodeSystem")
+
+
+def resources_from_fhir_file(content: bytes) -> list[dict]:
+    """Resurserna i en FHIR-Bundle, en enskild resurs (JSON) eller ett FHIR-paket (.tgz, NPM-format).
+
+    Paketet läses i minnet – inget packas upp på disk – med gränser för storlek och antal filer."""
+    import io
+    import tarfile
+    if len(content) > FHIR_FILE_LIMIT:
+        raise OpError(f"Filen är större än {FHIR_FILE_LIMIT // (1024 * 1024)} MB.")
+    if content[:2] == b"\x1f\x8b":
+        resources, total = [], 0
+        try:
+            with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as tar:
+                for n, member in enumerate(tar):
+                    if n > FHIR_PACKAGE_FILES:
+                        raise OpError(f"Paketet har fler än {FHIR_PACKAGE_FILES} filer.")
+                    name = member.name.rsplit("/", 1)[-1]
+                    if not member.isfile() or not name.endswith(".json") or name in ("package.json", ".index.json") \
+                            or name.startswith("."):
+                        continue
+                    total += member.size
+                    if member.size > FHIR_FILE_LIMIT or total > FHIR_PACKAGE_TOTAL:
+                        raise OpError("Paketet är för stort.")
+                    try:
+                        data = json.loads(tar.extractfile(member).read())
+                    except ValueError:
+                        continue
+                    if isinstance(data, dict) and data.get("resourceType"):
+                        resources.append(data)
+        except (tarfile.TarError, OSError, EOFError) as exc:
+            raise OpError(f"Filen är inget läsbart FHIR-paket (.tgz): {exc}") from exc
+    else:
+        try:
+            data = json.loads(content.decode("utf-8-sig"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise OpError("Filen är varken JSON (FHIR-Bundle eller resurs) eller ett FHIR-paket (.tgz).") from exc
+        if not isinstance(data, dict) or not data.get("resourceType"):
+            raise OpError("Filen innehåller ingen FHIR-resurs.")
+        resources = [e.get("resource") for e in data.get("entry", []) if isinstance(e, dict)] \
+            if data["resourceType"] == "Bundle" else [data]
+        resources = [r for r in resources if isinstance(r, dict) and r.get("resourceType")]
+    if not resources:
+        raise OpError("Filen innehåller inga FHIR-resurser.")
+    return resources
+
+
+def can_take_in(resource: dict) -> str | None:
+    """None om resursen kan tas in som projekt, annars varför inte."""
+    if resource.get("resourceType") not in TAKE_IN_TYPES:
+        return f"{resource.get('resourceType')} kan inte tas in som projekt."
+    if not resource.get("url") or not (resource.get("id") or resource.get("name")):
+        return "Resursen saknar canonical URL eller id."
+    if resource["resourceType"] == "CodeSystem" and resource.get("content") != "supplement":
+        return "Kodsystem tas in via Ny inläsning (Excel/CSV); här tas bara översättningar (supplement) in."
+    return None
+
+
 def project_from_resource(ws: Workspace, resource: dict, title: str, author: str,
                           namespace: Namespace | None = None, classification: str | None = None,
                           base_codes: list[dict] | None = None) -> Project:

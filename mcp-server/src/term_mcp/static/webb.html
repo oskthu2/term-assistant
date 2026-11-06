@@ -57,6 +57,10 @@ aside h2 { font-size: 15px; margin: 0 0 8px; }
 .proposal:first-of-type { border-top: 0; }
 .proposal .url { color: var(--muted); font-size: 12px; word-break: break-all; }
 .proposal a { margin-right: 10px; color: var(--accent); }
+.proposal .facts { color: var(--muted); font-size: 12px; }
+.downloads { display: flex; flex-wrap: wrap; gap: 8px; }
+a.button { display: inline-block; padding: 7px 12px; border-radius: var(--radius); background: var(--accent); color: #fff; text-decoration: none; font-size: 14px; }
+a.button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 .empty { color: var(--muted); font-size: 14px; }
 .banner { margin: 12px 20px 0; padding: 10px 14px; border-radius: var(--radius); background: var(--warn-weak); color: var(--warn); }
 </style>
@@ -66,8 +70,7 @@ aside h2 { font-size: 15px; margin: 0 0 8px; }
   <h1>Terminologiassistent</h1>
   <span class="badge" id="tx">…</span>
   <span class="spacer"></span>
-  <label class="toggle" title="Låt assistenten skapa förslag på urval, mappningar och översättningar på terminologitjänsten">
-    <input type="checkbox" id="forslag" checked> Förslag tillåtna</label>
+  <span class="badge" title="MCP-servern skriver aldrig till terminologitjänsten">endast läsning</span>
   <button class="secondary" id="new">Nytt samtal</button>
 </header>
 <div class="banner" id="nokey" hidden>ANTHROPIC_API_KEY saknas – assistenten kan inte svara. Lägg nyckeln som Codespaces-hemlighet och starta om.</div>
@@ -75,17 +78,20 @@ aside h2 { font-size: 15px; margin: 0 0 8px; }
   <section class="panel">
     <div id="log" aria-live="polite"></div>
     <form id="ask">
-      <textarea id="instruktion" placeholder="Instruera assistenten, t.ex. ”Föreslå en mappning från norska civilstånd till HL7 v3” (Ctrl+Enter skickar)" aria-label="Instruktion"></textarea>
+      <textarea id="instruktion" placeholder="Instruera assistenten, t.ex. ”Gör ett utkast till mappning från norska civilstånd till HL7 v3” (Ctrl+Enter skickar)" aria-label="Instruktion"></textarea>
       <button type="submit" id="send">Skicka</button>
     </form>
     <div class="examples" id="examples"></div>
   </section>
   <aside class="panel">
-    <h2>Förslag på terminologitjänsten</h2>
-    <p class="empty" style="margin-top:0">Utkast som väntar på granskning i
-      <a id="adminlink" href="#" target="_blank" rel="noopener">administrationsverktyget</a>.</p>
-    <div id="proposals"><p class="empty">Inga förslag ännu.</p></div>
-    <p><button class="secondary" id="refresh">Uppdatera</button></p>
+    <h2>Utkast</h2>
+    <p class="empty" style="margin-top:0">Urval, mappningar och översättningar som assistenten har gjort i det
+      här samtalet. Hämta dem och ta in filen i
+      <a id="adminlink" href="#" target="_blank" rel="noopener">administrationsverktyget</a> för granskning.</p>
+    <div id="proposals"><p class="empty">Inga utkast ännu.</p></div>
+    <p class="downloads" id="downloads" hidden>
+      <a class="button" id="dl-tgz" href="#">Hämta FHIR-paket (.tgz)</a>
+      <a class="button secondary" id="dl-json" href="#">Hämta FHIR-Bundle (.json)</a></p>
   </aside>
 </main>
 <script>
@@ -100,10 +106,9 @@ function scroll() { window.scrollTo({top: document.body.scrollHeight, behavior: 
 
 async function start() {
   cfg = await (await fetch("api/config")).json();
-  $("tx").textContent = cfg.proposalTx && cfg.proposalTx !== cfg.tx ? `${cfg.tx} · förslag → ${cfg.proposalTx}` : cfg.tx;
+  $("tx").textContent = cfg.tx;
   $("adminlink").href = cfg.admin + "/tx-forslag";
   $("nokey").hidden = cfg.apiKey;
-  if (!cfg.writeAllowed) { $("forslag").checked = false; $("forslag").disabled = true; }
   for (const ex of cfg.examples) {
     const b = el("button", null, ex); b.type = "button";
     b.onclick = () => { $("instruktion").value = ex; $("instruktion").focus(); };
@@ -115,13 +120,11 @@ async function start() {
 async function newConversation() {
   $("log").innerHTML = "";
   const status = el("p", "status", "Startar MCP-servern …"); $("log").append(status);
-  const r = await fetch("api/samtal", {method: "POST", headers: {"Content-Type": "application/json"},
-                                      body: JSON.stringify({forslag: $("forslag").checked})});
+  const r = await fetch("api/samtal", {method: "POST"});
   const data = await r.json();
   if (!r.ok) { status.className = "error"; status.textContent = data.error; return; }
   conv = data.id;
-  status.textContent = `Ansluten till MCP-servern – ${data.tools.length} verktyg` +
-    (data.forslag ? ", förslag tillåtna." : ", bara läsning.");
+  status.textContent = `Ansluten till MCP-servern – ${data.tools.length} verktyg, endast läsning.`;
   loadProposals();
 }
 
@@ -168,7 +171,7 @@ function handle(ev, status, tools) {
     if (d) { d.append(el("pre", null, pretty(ev.text))); if (ev.is_error) d.classList.add("error");
              d.querySelector("summary").append(ev.is_error ? "  ✗ fel" : "  ✓"); }
     status.textContent = "Arbetar …";
-    if (/^propose_|^withdraw_/.test(ev.name || "")) loadProposals();
+    if (/^draft_|^discard_/.test(ev.name || "")) loadProposals();
   } else if (ev.type === "done") {
     if (ev.note) log.insertBefore(el("p", "note", ev.note), status);
     loadProposals();
@@ -180,18 +183,25 @@ function handle(ev, status, tools) {
 
 async function loadProposals() {
   if (!conv) return;
-  const r = await fetch(`api/samtal/${conv}/forslag`);
+  const r = await fetch(`api/samtal/${conv}/utkast`);
   const list = await r.json();
   const box = $("proposals"); box.innerHTML = "";
-  if (!r.ok) { box.append(el("p", "error", list.error || "Kunde inte hämta förslagen.")); return; }
-  if (!list.length) { box.append(el("p", "empty", "Inga förslag ännu.")); return; }
+  $("downloads").hidden = !(r.ok && list.length);
+  if (!r.ok) { box.append(el("p", "error", list.error || "Kunde inte hämta utkasten.")); return; }
+  if (!list.length) { box.append(el("p", "empty", "Inga utkast ännu.")); return; }
+  $("dl-tgz").href = `api/samtal/${conv}/utkast.tgz`;
+  $("dl-json").href = `api/samtal/${conv}/utkast.json`;
   for (const p of list) {
     const d = el("div", "proposal");
     d.append(el("span", "badge", KIND[p.resourceType] || p.resourceType), " ", el("b", null, p.title || p.id));
     d.append(el("div", "url", p.url));
-    const view = el("a", null, "Visa (JSON)"); view.href = `api/resurs/${p.resourceType}/${encodeURIComponent(p.id)}`; view.target = "_blank";
-    const review = el("a", null, "Granska"); review.href = cfg.admin + "/tx-forslag"; review.target = "_blank";
-    d.append(view, review);
+    const facts = p.resourceType === "ConceptMap" ? `${p.mappings} källkoder`
+      : p.resourceType === "CodeSystem" ? `${p.translated} översatta koder (${p.language})`
+      : (p.ecl ? `ECL ${p.ecl.join(", ")} – ${p.ecl_concepts} begrepp` : `${p.codes} koder`);
+    d.append(el("div", "facts", facts));
+    const file = el("a", null, "Hämta resursen (JSON)");
+    file.href = `api/samtal/${conv}/utkast/${p.resourceType}/${encodeURIComponent(p.id)}.json`;
+    d.append(file);
     box.append(d);
   }
 }
@@ -199,8 +209,6 @@ async function loadProposals() {
 $("ask").onsubmit = (e) => { e.preventDefault(); const t = $("instruktion").value.trim(); if (t) { $("instruktion").value = ""; ask(t); } };
 $("instruktion").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("ask").requestSubmit(); };
 $("new").onclick = () => { if (!busy) newConversation(); };
-$("forslag").onchange = () => { if (!busy) newConversation(); };
-$("refresh").onclick = loadProposals;
 start();
 </script>
 </body>

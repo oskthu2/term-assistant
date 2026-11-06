@@ -6,9 +6,10 @@
 Varje samtal har en egen MCP-server (underprocess, stdio) och en egen dialog med
 Claude. Stegen – Claudes text, verktygsanrop och verktygssvar – strömmas till
 sidan medan de sker. Förslag som skapats på terminologitjänsten listas bredvid
-samtalet, med länk till resursen och till administrationsverktyget där de granskas.
-Som demo-klienten pratar webbappen bara med MCP-servern, aldrig direkt med
-terminologitjänsten (utom för att visa en resurs som JSON).
+samtalet. MCP-servern skriver ingenting till terminologitjänsten: urval, mappningar
+och översättningar blir utkast som hämtas här som FHIR-Bundle eller FHIR-paket (.tgz)
+och tas in i administrationsverktyget för granskning. Som demo-klienten pratar
+webbappen bara med MCP-servern, aldrig direkt med terminologitjänsten.
 """
 
 from __future__ import annotations
@@ -18,11 +19,13 @@ import asyncio
 import contextlib
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from .demo import EXAMPLES, LOCAL_TX, Session, connect, server_parameters
+from . import drafts
+from .demo import EXAMPLES, LOCAL_TX, Session, connect, read_drafts, server_parameters
 
 STATIC = Path(__file__).parent / "static"
 
@@ -30,8 +33,33 @@ STATIC = Path(__file__).parent / "static"
 def render_markdown(text: str) -> str:
     """Claudes svar (markdown) som HTML. HTML i texten visas som text, inte som kod."""
     import markdown
-    safe = text.replace("&", "&amp;").replace("<", "&lt;")
-    return markdown.markdown(safe, extensions=["tables", "fenced_code", "sane_lists"])
+    md = markdown.Markdown(extensions=["tables", "fenced_code", "sane_lists"])
+    # Ingen rå HTML: block och inline-taggar tolkas inte utan visas som text (och kodsnuttar escapas bara en gång).
+    md.preprocessors.deregister("html_block")
+    md.inlinePatterns.deregister("html")
+    md.treeprocessors.register(_SafeLinks(md), "safe-links", 0)
+    return md.convert(text)
+
+
+def _safe_url(url: str) -> bool:
+    from urllib.parse import urlsplit
+    scheme = urlsplit(url.strip()).scheme.lower()
+    return scheme in ("", "http", "https", "mailto")
+
+
+class _SafeLinks:
+    """Ta bort länkar och bilder med t.ex. javascript:-adresser ur Claudes markdown."""
+
+    def __init__(self, md):
+        self.md = md
+
+    def run(self, root):
+        for element in root.iter():
+            for attribute in ("href", "src"):
+                value = element.get(attribute)
+                if value is not None and not _safe_url(value):
+                    del element.attrib[attribute]
+        return None
 
 
 def port_url(port: int, default_host: str = "localhost") -> str:
@@ -45,9 +73,9 @@ def port_url(port: int, default_host: str = "localhost") -> str:
 class Conversation:
     """Ett samtal: en MCP-session och en Claude-dialog som lever i en egen bakgrundsuppgift."""
 
-    def __init__(self, tx_url: str, allow_write: bool, anthropic_factory: Callable[[], Any] | None):
+    def __init__(self, tx_url: str, anthropic_factory: Callable[[], Any] | None):
         self.id = uuid.uuid4().hex
-        self.tx_url, self.allow_write = tx_url, allow_write
+        self.tx_url = tx_url
         self.anthropic_factory = anthropic_factory
         self.jobs: asyncio.Queue = asyncio.Queue()
         self.ready = asyncio.Event()
@@ -57,7 +85,7 @@ class Conversation:
 
     async def _run(self) -> None:
         try:
-            async with connect(server_parameters(self.tx_url, self.allow_write)) as mcp:
+            async with connect(server_parameters(self.tx_url)) as mcp:
                 self.mcp = mcp
                 self.session: Session | None = None
                 self.ready.set()
@@ -107,15 +135,14 @@ class Conversation:
             await asyncio.wait_for(self.task, 10)
 
 
-def create_app(tx_url: str | None = None, allow_write: bool = True,
+def create_app(tx_url: str | None = None,
                anthropic_factory: Callable[[], Any] | None = None, admin_url: str | None = None):
     from starlette.applications import Starlette
     from starlette.requests import Request
-    from starlette.responses import FileResponse, JSONResponse, StreamingResponse
+    from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
     from starlette.routing import Route
 
     tx_url = (tx_url or os.environ.get("TX_BASE_URL") or LOCAL_TX).rstrip("/")
-    proposal_url = (os.environ.get("TX_PROPOSAL_URL") or "").rstrip("/") or tx_url  # där förslagen skrivs
     admin_url = (admin_url or os.environ.get("TERM_ADMIN_URL") or port_url(8000)).rstrip("/")
     conversations: dict[str, Conversation] = {}
 
@@ -126,19 +153,18 @@ def create_app(tx_url: str | None = None, allow_write: bool = True,
         return FileResponse(STATIC / "webb.html")
 
     async def config(request: Request):
-        return JSONResponse({"tx": tx_url, "proposalTx": proposal_url, "admin": admin_url, "examples": EXAMPLES, "writeAllowed": allow_write,
+        return JSONResponse({"tx": tx_url, "admin": admin_url, "examples": EXAMPLES,
                              "apiKey": bool(os.environ.get("ANTHROPIC_API_KEY")) or anthropic_factory is not None})
 
     async def new_conversation(request: Request):
-        body = await request.json() if await request.body() else {}
-        conv = Conversation(tx_url, allow_write and bool(body.get("forslag", True)), anthropic_factory)
+        conv = Conversation(tx_url, anthropic_factory)
         conversations[conv.id] = conv
         await conv.ready.wait()
         if conv.error:
             conversations.pop(conv.id)
             return JSONResponse({"error": f"MCP-servern startade inte: {conv.error}"}, status_code=500)
         tools = await conv.submit(lambda: conv.mcp.list_tools())
-        return JSONResponse({"id": conv.id, "forslag": conv.allow_write, "tools": [t.name for t in tools.tools]})
+        return JSONResponse({"id": conv.id, "tools": [t.name for t in tools.tools]})
 
     async def ask(request: Request):
         conv = get(request)
@@ -182,27 +208,38 @@ def create_app(tx_url: str | None = None, allow_write: bool = True,
             conv.session.reset()
         return JSONResponse({"ok": True})
 
-    async def proposals(request: Request):
+    async def draft_list(request: Request):
         conv = get(request)
         if conv is None:
             return JSONResponse([], status_code=404)
         try:
-            return JSONResponse(await conv.call_tool("list_proposals", {}))
+            return JSONResponse(await conv.call_tool("list_drafts", {}))
         except Exception as exc:
             return JSONResponse({"error": _friendly(exc)}, status_code=502)
 
-    async def resource(request: Request):
-        """Visa ett förslag på förslagsservern som JSON (fungerar även via Codespaces portvidarebefordran)."""
-        import httpx2
-        rtype, rid = request.path_params["rtype"], request.path_params["rid"]
-        if rtype not in ("CodeSystem", "ValueSet", "ConceptMap"):
-            return JSONResponse({"error": "okänd resurstyp"}, status_code=400)
-        async with httpx2.AsyncClient(timeout=30) as http:
-            headers = {"Accept": "application/fhir+json"}
-            if proposal_url != tx_url and os.environ.get("TX_PROPOSAL_TOKEN"):
-                headers["Authorization"] = f"Bearer {os.environ['TX_PROPOSAL_TOKEN']}"
-            r = await http.get(f"{proposal_url}/{rtype}/{rid}", headers=headers)
-        return JSONResponse(r.json(), status_code=r.status_code)
+    async def draft_download(request: Request):
+        """Utkasten som fil: utkast.json (FHIR-Bundle), utkast.tgz (FHIR-paket) eller en enskild resurs."""
+        conv = get(request)
+        if conv is None:
+            return JSONResponse({"error": "Samtalet finns inte – ladda om sidan."}, status_code=404)
+        resources = await conv.submit(lambda: read_drafts(conv.mcp))
+        rtype, rid = request.path_params.get("rtype"), request.path_params.get("rid")
+        if request.path_params.get("format", "json") not in ("json", "tgz"):
+            return JSONResponse({"error": "Formatet ska vara json eller tgz."}, status_code=404)
+        if rtype:
+            resources = [r for r in resources if r["resourceType"] == rtype and r["id"] == rid]
+        if not resources:
+            return JSONResponse({"error": "Inga utkast att hämta."}, status_code=404)
+        stamp = time.strftime("%Y%m%d-%H%M")
+        if request.path_params.get("format") == "tgz":
+            content, media, name = drafts.package(resources), "application/gzip", f"utkast-{stamp}.tgz"
+        elif rtype:
+            content = json.dumps(resources[0], ensure_ascii=False, indent=2).encode()
+            media, name = "application/fhir+json", f"{rtype}-{rid}.json"
+        else:
+            content = json.dumps(drafts.bundle(resources), ensure_ascii=False, indent=2).encode()
+            media, name = "application/fhir+json", f"utkast-{stamp}.json"
+        return Response(content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
@@ -216,8 +253,9 @@ def create_app(tx_url: str | None = None, allow_write: bool = True,
         Route("/api/samtal", new_conversation, methods=["POST"]),
         Route("/api/samtal/{cid}/fraga", ask, methods=["POST"]),
         Route("/api/samtal/{cid}/nollstall", reset, methods=["POST"]),
-        Route("/api/samtal/{cid}/forslag", proposals),
-        Route("/api/resurs/{rtype}/{rid}", resource),
+        Route("/api/samtal/{cid}/utkast", draft_list),
+        Route("/api/samtal/{cid}/utkast.{format:str}", draft_download),
+        Route("/api/samtal/{cid}/utkast/{rtype}/{rid}.json", draft_download),
     ]
     return Starlette(routes=routes, lifespan=lifespan)
 
@@ -235,10 +273,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--tx", default=None, help=f"Terminologitjänst (standard TX_BASE_URL eller {LOCAL_TX})")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8001)
-    parser.add_argument("--utan-forslag", action="store_true", help="Stäng av förslagsverktygen helt")
     args = parser.parse_args(argv)
     import uvicorn
-    app = create_app(args.tx, allow_write=not args.utan_forslag)
+    app = create_app(args.tx)
     print(f"Webbgränssnittet: http://{args.host}:{args.port}  (terminologitjänst: "
           f"{(args.tx or os.environ.get('TX_BASE_URL') or LOCAL_TX)})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

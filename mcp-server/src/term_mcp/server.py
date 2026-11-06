@@ -12,11 +12,12 @@ Miljövariabler:
     TX_TOKEN        valfri bearer-token; eller TX_TOKEN_URL/TX_CLIENT_ID/TX_CLIENT_SECRET/TX_SCOPE
                     för OAuth2 client credentials med automatisk förnyelse
     TX_SNOMED_EDITION  SNOMED CT-edition när ingen version anges (t.ex. se = 45991000052106)
-    TX_PROPOSAL_URL annan server för förslagen (t.ex. HAPI) när TX_BASE_URL bara ska läsas
     TX_LANGUAGE     föredraget språk för displaytexter (standard sv)
-    TX_ALLOW_WRITE  "1" aktiverar förslagsverktygen (propose_valueset, propose_conceptmap,
-                    propose_translation, withdraw_proposal). Avstängt som standard – använd mot
-                    en testserver. Förslag skriver aldrig över granskat innehåll.
+
+Servern behöver bara läsrätt. Urval, mappningar och översättningar byggs som *utkast*
+(draft_valueset, draft_conceptmap, draft_translation): koderna kontrolleras mot tjänsten
+och resursen sparas i serverns minne, där den hämtas som MCP-resurs (utkast://…), som
+FHIR-Bundle eller som FHIR-paket och tas in i administrationsverktyget. Inget skrivs.
 
 Kör:  term-mcp           (stdio, för Claude Desktop/Code och demo-klienten)
       term-mcp --http    (streamable HTTP)
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import functools
+import json
 import logging
 import re
 from typing import Any
@@ -36,7 +38,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .config import SNOMED, ServerConfig
-from . import proposals
+from . import drafts
 from .fhir.client import TerminologyClient, TerminologyError
 
 INSTRUCTIONS = """\
@@ -52,18 +54,20 @@ SNOMED CT (system http://snomed.info/sct): sök med snomed_ecl och avgränsa til
 rätt del av hierarkin, t.ex. "<< 404684003" (kliniska fynd) eller "<< 71388002"
 (procedurer), gärna med en sökterm. Fritext över hela SNOMED CT ger mycket brus.
 Termerna kommer från den edition server_info visar (svenska om den är satt).
-Om förslagsverktygen finns (propose_valueset, propose_conceptmap,
-propose_translation) skapar de förslag på tjänsten: utkast som granskas i
-administrationsverktyget innan de släpps. Hämta koderna och deras texter med
-verktygen innan du föreslår något, motivera val som inte är självklara, och
-säg vad som skapades (canonical URL, antal koder). list_proposals visar
-ogranskade förslag. Ett urval ur SNOMED CT föreslås helst med ett ECL-uttryck
-(propose_valueset med ecl) i stället för en lång kodlista."""
+Servern skriver aldrig till terminologitjänsten. Urval, mappningar och
+översättningar byggs som utkast (draft_valueset, draft_conceptmap,
+draft_translation): koderna kontrolleras och resursen sparas här, så att
+användaren kan hämta den som FHIR-Bundle eller FHIR-paket och ta in den i
+administrationsverktyget för granskning. Hämta koderna och deras texter med
+verktygen innan du gör ett utkast, motivera val som inte är självklara och säg
+vad som skapades (canonical URL, antal koder). list_drafts visar utkasten,
+export_drafts ger dem som Bundle. Ett urval ur SNOMED CT görs helst med ett
+ECL-uttryck (draft_valueset med ecl) i stället för en lång kodlista."""
 
 mcp = MCPServer("term-mcp", instructions=INSTRUCTIONS)
 
 _client: TerminologyClient | None = None
-_writer: TerminologyClient | None = None
+DRAFTS = drafts.DraftStore()  # utkasten lever så länge MCP-servern (en per samtal i klienterna)
 
 
 def tool(fn):
@@ -73,7 +77,7 @@ def tool(fn):
     async def wrapper(*args, **kwargs):
         try:
             return await fn(*args, **kwargs)
-        except (TerminologyError, ValueError) as exc:  # ProposalError är en ValueError
+        except (TerminologyError, ValueError) as exc:  # drafts.ProposalError är en ValueError
             raise ToolError(str(exc)) from exc
         except httpx2.HTTPError as exc:
             raise ToolError(f"Terminologitjänsten svarar inte ({type(exc).__name__}: {exc})") from exc
@@ -86,15 +90,6 @@ def client() -> TerminologyClient:
     if _client is None:
         _client = TerminologyClient(ServerConfig.from_env())
     return _client
-
-
-def writer() -> TerminologyClient:
-    """Servern som förslagen skrivs till: TX_PROPOSAL_URL om den är satt, annars samma som client()."""
-    global _writer
-    if _writer is None:
-        cfg = client().config
-        _writer = client() if not cfg.proposal_url else TerminologyClient(cfg.for_proposals())
-    return _writer
 
 
 def _summary(resource: dict[str, Any]) -> dict[str, Any]:
@@ -116,10 +111,9 @@ async def _search(resource_type: str, query: str | None, count: int) -> list[dic
 
 @tool
 async def server_info() -> dict:
-    """Visa vilken terminologitjänst som används, dess programvara/FHIR-version och om skrivning är på."""
+    """Visa vilken terminologitjänst som används, dess programvara/FHIR-version och SNOMED CT-edition."""
     cfg = client().config
-    return {"base_url": cfg.base_url, "write_enabled": cfg.allow_write,
-            "proposal_server": writer().config.base_url if cfg.allow_write else None,
+    return {"base_url": cfg.base_url, "access": "endast läsning", "drafts": len(DRAFTS.all()),
             "snomed_edition": cfg.snomed_edition or "serverns standard", "language": cfg.language,
             **await client().capabilities()}
 
@@ -205,14 +199,13 @@ def _compact_snomed(result: dict) -> dict:
 
 
 async def _supplement_translations(system: str, code: str) -> list[dict]:
-    """Alla servrar använder inte supplement i $lookup (HAPI gör det inte), så de läses direkt –
-    även från förslagsservern, så att föreslagna översättningar syns."""
-    supplements = []
-    for tx in dict.fromkeys((client(), writer())):
-        try:
-            supplements += await tx.search("CodeSystem", count=50, supplements=system, _summary="false")
-        except (TerminologyError, httpx2.HTTPError):
-            continue
+    """Alla servrar använder inte supplement i $lookup (HAPI gör det inte), så de läses direkt.
+    Översättningsutkast i den här sessionen tas också med (markerade som förslag)."""
+    try:
+        supplements = await client().search("CodeSystem", count=50, supplements=system, _summary="false")
+    except (TerminologyError, httpx2.HTTPError):
+        supplements = []
+    supplements += [d for d in DRAFTS.all() if d.get("supplements", "").split("|")[0] == system]
     out = []
     for cs in supplements:
         for concept in _flat_concepts(cs.get("concept", [])):
@@ -223,7 +216,7 @@ async def _supplement_translations(system: str, code: str) -> list[dict]:
                 texts = [(cs.get("language"), concept["display"])]
             for language, value in dict.fromkeys(texts):
                 out.append({"language": language, "value": value, "source": cs.get("url"),
-                            **({"proposal": True} if proposals.is_proposal(cs) else {})})
+                            **({"proposal": True} if drafts.is_proposal(cs) else {})})
     return out
 
 
@@ -357,57 +350,98 @@ async def validate_codes(tx: TerminologyClient, valueset: dict, concurrency: int
             "whole_code_systems": whole, "problems": [r for r in results if r["status"] != "ok"]}
 
 
-# -- förslag (skapas bara med TX_ALLOW_WRITE=1) -------------------------------------------------------
+# -- utkast (inget skrivs till terminologitjänsten) --------------------------------------------------
+
+def _keep(result: dict) -> dict:
+    """Spara utkastet och svara med en sammanfattning – resursen kan vara stor (t.ex. en ECL-expansion)."""
+    resource = result.pop("resource", None)
+    if resource is not None:
+        result["draft"] = DRAFTS.put(resource)
+        result["next"] = "Hämta som FHIR-Bundle eller paket i klienten, eller med export_drafts."
+    return result
+
 
 @tool
-async def list_proposals() -> list[dict]:
-    """Lista förslag (urval, mappningar, översättningar) som skapats på tjänsten och ännu inte granskats."""
-    return await proposals.list_all(writer())
-
-
-async def propose_valueset(url: str, name: str, title: str, concepts: list[dict] | None = None,
-                           ecl: str | None = None, rationale: str | None = None, version: str = "0.1.0") -> dict:
-    """Föreslå ett urval (ValueSet): uttryckligen listade koder (`concepts`: [{system, code, display?}])
+async def draft_valueset(url: str, name: str, title: str, concepts: list[dict] | None = None,
+                         ecl: str | None = None, rationale: str | None = None, version: str = "0.1.0") -> dict:
+    """Gör ett utkast till urval (ValueSet): uttryckligen listade koder (`concepts`: [{system, code, display?}])
     och/eller, för SNOMED CT, ett ECL-uttryck (`ecl`, t.ex. "<< 73211009") som definierar urvalet.
     Koderna och uttrycket kontrolleras först; okända koder eller ett ogiltigt uttryck gör att inget
-    skapas. Skapas som utkast märkt "förslag" och granskas sedan i administrationsverktyget. Samma
-    namn ersätter ett tidigare förslag."""
-    return await proposals.valueset(client(), url, name, title, concepts or [], rationale, version, ecl=ecl,
-                                    store=writer())
+    utkast skapas. Utkastet sparas här (inget skrivs till tjänsten) och granskas i administrations-
+    verktyget. Samma namn ersätter ett tidigare utkast."""
+    return _keep(await drafts.valueset(client(), url, name, title, concepts or [], rationale, version, ecl=ecl))
 
 
-async def propose_conceptmap(url: str, name: str, title: str, source_system: str, target_system: str,
-                             mappings: list[dict], rationale: str | None = None,
-                             source_valueset: str | None = None, target_valueset: str | None = None,
-                             version: str = "0.1.0") -> dict:
-    """Föreslå en mappning (ConceptMap) från ett kodsystem till ett annat.
+@tool
+async def draft_conceptmap(url: str, name: str, title: str, source_system: str, target_system: str,
+                           mappings: list[dict], rationale: str | None = None,
+                           source_valueset: str | None = None, target_valueset: str | None = None,
+                           version: str = "0.1.0") -> dict:
+    """Gör ett utkast till mappning (ConceptMap) från ett kodsystem till ett annat.
     `mappings`: [{source_code, target_code, relation, comment?}] där relation är equivalent (likvärdig),
     wider (målet är bredare), narrower (målet är smalare – kräver comment), related (närliggande – kräver
     comment) eller unmatched (ingen motsvarighet, utan target_code). En källkod kan ha flera mål.
     Med `source_valueset` rapporteras vilka källkoder som saknar mappning. Alla koder kontrolleras först."""
-    return await proposals.conceptmap(client(), url, name, title, source_system, target_system, mappings,
-                                      rationale, source_valueset, target_valueset, version,
-                                      client().config.fhir_version, store=writer())
+    return _keep(await drafts.conceptmap(client(), url, name, title, source_system, target_system, mappings,
+                                         rationale, source_valueset, target_valueset, version,
+                                         client().config.fhir_version))
 
 
-async def propose_translation(codesystem: str, language: str, translations: list[dict],
-                              url: str | None = None, name: str | None = None, title: str | None = None,
-                              rationale: str | None = None) -> dict:
-    """Föreslå en översättning av ett kodsystem som finns på tjänsten, som CodeSystem-supplement.
+@tool
+async def draft_translation(codesystem: str, language: str, translations: list[dict],
+                            url: str | None = None, name: str | None = None, title: str | None = None,
+                            rationale: str | None = None) -> dict:
+    """Gör ett utkast till översättning av ett kodsystem som finns på tjänsten, som CodeSystem-supplement.
     `translations`: [{code, display}] där display är texten på målspråket `language` (BCP-47, t.ex. sv).
     Översätt utifrån kodsystemets egna displaytexter och definitioner, inte från minnet."""
-    return await proposals.translation(client(), codesystem, language, translations, url, name, title, rationale,
-                                       proposal_base=client().config.proposal_base, store=writer())
+    return _keep(await drafts.translation(client(), codesystem, language, translations, url, name, title,
+                                          rationale, proposal_base=client().config.proposal_base))
 
 
-async def withdraw_proposal(resource_type: str, id: str) -> dict:
-    """Ta bort ett förslag (bara resurser märkta som förslag kan tas bort)."""
-    return await proposals.withdraw(writer(), resource_type, id)
+@tool
+async def list_drafts() -> list[dict]:
+    """Lista utkasten i den här sessionen (urval, mappningar, översättningar) med sammanfattning."""
+    return DRAFTS.summaries()
 
 
-if ServerConfig.from_env().allow_write:
-    for _fn in (propose_valueset, propose_conceptmap, propose_translation, withdraw_proposal):
-        tool(_fn)
+@tool
+async def get_draft(resource_type: str, id: str) -> dict:
+    """Hämta ett utkast som hel FHIR-resurs."""
+    resource = DRAFTS.get(resource_type, id)
+    if resource is None:
+        raise ValueError(f"Inget utkast {resource_type}/{id}. list_drafts visar utkasten.")
+    return resource
+
+
+@tool
+async def export_drafts() -> dict:
+    """Alla utkast som en FHIR-Bundle (collection), att spara och ta in i administrationsverktyget."""
+    if not DRAFTS.all():
+        raise ValueError("Det finns inga utkast att exportera.")
+    return drafts.bundle(DRAFTS.all())
+
+
+@tool
+async def discard_draft(resource_type: str, id: str) -> dict:
+    """Ta bort ett utkast ur sessionen."""
+    if not DRAFTS.remove(resource_type, id):
+        raise ValueError(f"Inget utkast {resource_type}/{id}.")
+    return {"discarded": True, "resourceType": resource_type, "id": id}
+
+
+@mcp.resource("utkast://bundle", name="utkast", title="Alla utkast som FHIR-Bundle",
+              mime_type="application/fhir+json")
+def drafts_bundle() -> str:
+    return json.dumps(drafts.bundle(DRAFTS.all()), ensure_ascii=False)
+
+
+@mcp.resource("utkast://{resource_type}/{id}", name="utkast-resurs", title="Ett utkast som FHIR-resurs",
+              mime_type="application/fhir+json")
+def draft_resource(resource_type: str, id: str) -> str:
+    resource = DRAFTS.get(resource_type, id)
+    if resource is None:
+        raise ValueError(f"Inget utkast {resource_type}/{id}.")
+    return json.dumps(resource, ensure_ascii=False)
 
 
 def run(transport: str = "stdio") -> None:

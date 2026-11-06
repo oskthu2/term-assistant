@@ -154,3 +154,59 @@ def test_take_in_ecl_valueset_uses_expansion_snapshot(tmp_path):
     partial = vs | {"id": "Stor", "expansion": vs["expansion"] | {"total": 5000}}
     with pytest.raises(ops.OpError, match="fullständig"):
         ops.project_from_resource(ws, partial, "Stor", "anna")
+
+
+def _tgz(files: dict[str, object]) -> bytes:
+    import io
+    import json as _json
+    import tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, content in files.items():
+            data = content if isinstance(content, bytes) else _json.dumps(content).encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_take_in_drafts_from_bundle_and_package(client):
+    import json as _json
+    full_cs = {"resourceType": "CodeSystem", "id": "Eget", "url": "http://ex.org/cs", "content": "complete"}
+    bundle = {"resourceType": "Bundle", "type": "collection",
+              "entry": [{"resource": PROPOSAL}, {"resource": VS_PROPOSAL}, {"resource": full_cs}]}
+    r = client.post("/forslag/fil", files={"file": ("utkast.json", _json.dumps(bundle).encode())})
+    assert "3 resurser i utkast.json" in _msg(r.text) and "Utkast i utkast.json" in r.text
+    assert "Kodsystem tas in via Ny inläsning" in r.text                    # kan inte tas in härifrån
+    file_url = r.url.path
+    r = client.post(f"{file_url}/ta-in", data={"index": "0", "namespace": "ex"})
+    assert "taget in som projekt" in _msg(r.text) and "mappning" in r.text
+    page = client.get(file_url).text
+    assert page.count("taget in") == 1                                       # samma ursprung känns igen
+    r = client.post(f"{file_url}/ta-in", data={"index": "2", "namespace": "ex"})
+    assert "Kodsystem tas in" in _msg(r.text)
+    assert "finns inte" in _msg(client.post(f"{file_url}/ta-in", data={"index": "9"}).text)
+
+    package = _tgz({"package/package.json": {"name": "utkast"}, "package/.index.json": {"files": []},
+                    "package/ValueSet-Urval.json": VS_PROPOSAL, "package/other/readme.txt": b"x",
+                    "package/trasig.json": b"{inte json"})
+    r = client.post("/forslag/fil", files={"file": ("utkast.tgz", package)})
+    assert "1 resurser i utkast.tgz" in _msg(r.text)
+    r = client.post(f"{r.url.path}/ta-in", data={"index": "0", "namespace": "ex"})
+    assert "taget in som projekt" in _msg(r.text) and "Married" in client.get(
+        f"/p/{r.url.path.split('/')[2]}/s/Urval").text
+
+    for bad, message in ((b"hej", "varken JSON"), (b'{"a": 1}', "ingen FHIR-resurs"),
+                         (b"\x1f\x8bskrap", "inget läsbart FHIR-paket"),
+                         (b'{"resourceType": "Bundle", "entry": []}', "inga FHIR-resurser")):
+        assert message in _msg(client.post("/forslag/fil", files={"file": ("x.json", bad)}).text)
+
+
+def test_package_limits(monkeypatch):
+    from term_inlasning.admin import ops
+    monkeypatch.setattr(ops, "FHIR_PACKAGE_TOTAL", 100)
+    with pytest.raises(ops.OpError, match="för stort"):
+        ops.resources_from_fhir_file(_tgz({"package/a.json": {"resourceType": "ValueSet", "pad": "x" * 200}}))
+    monkeypatch.setattr(ops, "FHIR_PACKAGE_FILES", 2)
+    with pytest.raises(ops.OpError, match="fler än 2"):
+        ops.resources_from_fhir_file(_tgz({f"package/{i}.json": {"resourceType": "ValueSet"} for i in range(5)}))

@@ -1,4 +1,4 @@
-"""SNOMED CT mot Ontoserver: standardedition, ECL, kompakta uppslag, OAuth2-token och separat förslagsserver."""
+"""SNOMED CT mot Ontoserver: standardedition, ECL, kompakta uppslag, OAuth2-token och ECL-utkast."""
 
 import asyncio
 import json
@@ -6,7 +6,7 @@ import json
 import httpx2
 import pytest
 
-from term_mcp import proposals
+from term_mcp import drafts as proposals
 from term_mcp.config import SNOMED, ServerConfig, snomed_edition
 from term_mcp.fhir.client import TerminologyClient, TerminologyError
 from term_mcp.server import _compact_snomed
@@ -144,29 +144,20 @@ EXPANSION = {"total": 2, "contains": [
     {"system": SNOMED, "code": "46635009", "display": "diabetes mellitus typ 1", "version": f"{SE}/version/20251130"}]}
 
 
-def test_ecl_valueset_proposal_written_to_proposal_server():
-    onto, hapi = Server("onto", ecl=EXPANSION), Server("hapi")
+def test_ecl_valueset_draft_with_snapshot():
+    onto = Server("onto", ecl=EXPANSION)
     r = run(proposals.valueset(onto, "http://example.org/fhir/ValueSet/diabetes", "Diabetes", "Diabetes", [],
-                               ecl="<< 73211009", store=hapi))
+                               ecl="<< 73211009"))
     assert r["created"] and r["ecl_concepts"] == 2 and r["snapshot"] and not onto.puts
-    vs = hapi.puts[0]
+    vs = r["resource"]
     assert vs["compose"]["include"] == [{"system": SNOMED, "filter": [
         {"property": "constraint", "op": "=", "value": "<< 73211009"}]}]
     assert [c["code"] for c in vs["expansion"]["contains"]] == ["44054006", "46635009"]
     assert vs["expansion"]["parameter"] == [{"name": "used-codesystem", "valueUri": f"{SNOMED}|{SE}/version/20251130"}]
     with pytest.raises(proposals.ProposalError, match="godtogs inte"):
-        run(proposals.valueset(Server("onto"), "http://x/vs", "X", "X", [], ecl="<<< 7321", store=hapi))
+        run(proposals.valueset(Server("onto"), "http://x/vs", "X", "X", [], ecl="<<< 7321"))
     with pytest.raises(proposals.ProposalError, match="inga begrepp"):
         run(proposals.valueset(Server("onto", ecl={"total": 0, "contains": []}), "http://x/vs2", "X2", "X", [],
-                               ecl="<< 1", store=hapi))
+                               ecl="<< 1"))
     with pytest.raises(proposals.ProposalError, match="koder"):
-        run(proposals.valueset(onto, "http://x/vs3", "X3", "X", [], store=hapi))
-
-
-def test_reviewed_url_on_terminology_server_is_protected():
-    reviewed = {"resourceType": "ValueSet", "id": "diabetes", "url": "http://example.org/fhir/ValueSet/diabetes",
-                "status": "active"}
-    onto, hapi = Server("onto", ecl=EXPANSION, existing=[reviewed]), Server("hapi")
-    with pytest.raises(proposals.ProposalError, match="finns redan på terminologitjänsten"):
-        run(proposals.valueset(onto, reviewed["url"], "Diabetes2", "Diabetes", [], ecl="<< 73211009", store=hapi))
-    assert not hapi.puts
+        run(proposals.valueset(onto, "http://x/vs3", "X3", "X", []))

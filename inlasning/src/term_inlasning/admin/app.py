@@ -1007,7 +1007,71 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             error = f"Terminologitjänsten kunde inte nås: {exc}"
         taken = {p.source_file for p in ws.projects() if p.source_file}
         return render(request, "tx_proposals.html", proposals=found, error=error, taken=taken,
-                      tx=ServerConfig.from_env().base_url)
+                      tx=ServerConfig.from_env().base_url, take_url="/tx-forslag/ta-in", file=None)
+
+    async def _translation_base(resource: dict) -> list[dict] | None:
+        """Alla koder i kodsystemet som en översättning gäller, så att även oöversatta koder får en rad."""
+        if resource.get("content") != "supplement" or not resource.get("supplements"):
+            return None
+        try:
+            async with tx_client() as client:
+                return await ops.codesystem_codes(client, resource["supplements"].split("|")[0])
+        except Exception:  # noqa: BLE001 – då blir det bara de översatta koderna
+            return None
+
+    async def proposal_file_upload(request: Request):
+        """Ta in en FHIR-Bundle eller ett FHIR-paket (.tgz), t.ex. utkast hämtade från MCP-klienten."""
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not getattr(upload, "filename", ""):
+            return redirect("/tx-forslag", "Välj en fil (FHIR-Bundle .json eller FHIR-paket .tgz).")
+        content = await upload.read()
+        try:
+            resources = ops.resources_from_fhir_file(content)
+        except ops.OpError as exc:
+            return redirect("/tx-forslag", "; ".join(exc.messages))
+        uid, _ = ws.save_upload(upload.filename, content)
+        return redirect(f"/forslag/fil/{uid}", f"{len(resources)} resurser i {upload.filename}.")
+
+    def _file_resources(uid: str) -> tuple[Path, list[dict]]:
+        path = ws.upload_path(uid)
+        return path, ops.resources_from_fhir_file(path.read_bytes())
+
+    async def proposal_file_page(request: Request):
+        try:
+            path, resources = _file_resources(request.path_params["uid"])
+        except (KeyError, ops.OpError):
+            return render(request, "error.html", status=404, message="Filen finns inte.")
+        rows = [r | {"_index": i, "_reason": ops.can_take_in(r)} for i, r in enumerate(resources)]
+        taken = {p.source_file for p in ws.projects() if p.source_file}
+        return render(request, "tx_proposals.html", proposals=rows, error=None, taken=taken, tx=None,
+                      take_url=f"/forslag/fil/{request.path_params['uid']}/ta-in", file=path.name)
+
+    async def proposal_file_take(request: Request):
+        uid = request.path_params["uid"]
+        form = await request.form()
+        cfg = settings()
+        try:
+            _, resources = _file_resources(uid)
+            index = int(form.get("index", "-1"))
+            if not 0 <= index < len(resources):
+                raise ops.OpError("Resursen finns inte i filen.")
+            resource = resources[index]
+            reason = ops.can_take_in(resource)
+            if reason:
+                raise ops.OpError(reason)
+            resource.setdefault("id", resource.get("name"))
+            title = (form.get("title") or resource.get("title") or resource.get("name") or resource["id"]).strip()
+            project = ops.project_from_resource(ws, resource, title, author(request),
+                                                namespace=cfg.namespace(form.get("namespace")),
+                                                classification=cfg.classification(form.get("classification")).key,
+                                                base_codes=await _translation_base(resource))
+        except KeyError:
+            return render(request, "error.html", status=404, message="Filen finns inte.")
+        except (ops.OpError, ValueError) as exc:
+            messages = exc.messages if isinstance(exc, ops.OpError) else [str(exc)]
+            return redirect(f"/forslag/fil/{uid}", "; ".join(messages))
+        return redirect(f"/p/{project.id}", "Utkastet är taget in som projekt. Granska det innan release.")
 
     async def tx_proposal_take(request: Request):
         form = await request.form()
@@ -1019,13 +1083,7 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             if resource is None:
                 raise ops.OpError(f"{rtype}/{rid} finns inte längre på terminologitjänsten.")
             title = (form.get("title") or resource.get("title") or resource.get("name") or rid).strip()
-            base_codes = None
-            if resource.get("content") == "supplement" and resource.get("supplements"):
-                try:  # alla koder i kodsystemet, så att även oöversatta koder får en rad
-                    async with tx_client() as client:
-                        base_codes = await ops.codesystem_codes(client, resource["supplements"].split("|")[0])
-                except Exception:  # noqa: BLE001 – då blir det bara de översatta koderna
-                    base_codes = None
+            base_codes = await _translation_base(resource)
             project = ops.project_from_resource(ws, resource, title, author(request),
                                                 namespace=cfg.namespace(form.get("namespace")),
                                                 classification=cfg.classification(form.get("classification")).key,
@@ -1103,6 +1161,9 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         Route("/p/{pid}/hamta-koder", need("redaktör", fetch_new_codes), methods=["POST"]),
         Route("/tx-forslag", need("läsare", tx_proposals), methods=["GET"]),
         Route("/tx-forslag/ta-in", need("redaktör", tx_proposal_take), methods=["POST"]),
+        Route("/forslag/fil", need("redaktör", proposal_file_upload), methods=["POST"]),
+        Route("/forslag/fil/{uid}", need("redaktör", proposal_file_page), methods=["GET"]),
+        Route("/forslag/fil/{uid}/ta-in", need("redaktör", proposal_file_take), methods=["POST"]),
         Route("/p/{pid}/sok", need("läsare", code_search)),
         Route("/p/{pid}", need("läsare", project_page)),
         Route("/p/{pid}/meta", need("redaktör", project_meta), methods=["POST"]),

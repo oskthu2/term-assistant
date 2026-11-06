@@ -61,19 +61,10 @@ Om tjänsten kräver något annat, t.ex. klientcertifikat (SITHS), är det klien
 * **Kompakta svar.** `$lookup` för SNOMED CT ger alla barn och samma term en gång per
   språkreferensmängd. `lookup_code` räknar barnen och slår ihop termerna per språk.
   `concept_hierarchy` hämtar föräldrar och barn med text via ECL (`>!` och `<!`).
-* **ECL-urval som förslag.** `propose_valueset` med `ecl` skapar ett intensionellt ValueSet
+* **ECL-urval som utkast.** `draft_valueset` med `ecl` skapar ett intensionellt ValueSet
   (`compose.include.filter`) och sparar expansionen som ögonblicksbild (upp till 1000
   begrepp), med vilken edition den gjordes mot. Administrationsverktyget tar in urvalet
   som kodlista ur ögonblicksbilden och behöver alltså inte själv nå Ontoserver.
-
-**Läsa från en server, skriva förslag till en annan.** Med `TX_PROPOSAL_URL` läser och
-kontrollerar MCP-servern mot `TX_BASE_URL` (t.ex. Ineras Ontoserver i drift) men skriver
-förslagen till en annan server (t.ex. HAPI i en testmiljö). Kodkontrollen sker alltså mot
-den riktiga terminologitjänsten även när förslagsservern inte har kodsystemen. En URL som
-finns som granskad resurs på någon av servrarna kan inte tas av ett förslag.
-`list_proposals`, `withdraw_proposal` och webbgränssnittets förslagslista använder
-förslagsservern. Administrationsverktygets **Förslag från terminologitjänsten** ska då
-peka på förslagsservern.
 
 Hierarkinavigering är den operation som skiljer mest mellan servrar. Klienten
 frågar först `$lookup` efter `parent`/`child`. Om inga barn kommer tillbaka
@@ -85,18 +76,26 @@ servrar stöder sökparametrar olika (tx.fhir.org ignorerar t.ex. `title:contain
 `ValueSet/$validate-code` utan `system` misslyckas på HAPI. Verktyget hämtar då
 systemet ur expansionen och försöker igen.
 
-**Förslag i stället för skrivning.** MCP-servern kan inte ändra granskat innehåll. Med
-`TX_ALLOW_WRITE=1` kan den skapa förslag, och det är det enda den skriver:
+**Endast läsrätt – utkast i stället för skrivning.** MCP-servern skriver aldrig till
+terminologitjänsten och behöver bara läsrätt. Den kan därför ställas mot en tjänst i drift
+utan skrivbehörighet, och utan inloggning där tjänsten är öppen. Urval, mappningar och
+översättningar byggs som **utkast**:
 
-* **urval** (`propose_valueset`)
-* **mappningar** (`propose_conceptmap`)
-* **översättningar** (`propose_translation`), som CodeSystem-supplement
+* **urval** (`draft_valueset`): listade koder och/eller ECL
+* **mappningar** (`draft_conceptmap`)
+* **översättningar** (`draft_translation`), som CodeSystem-supplement
 
-Varje förslag är ett utkast (`draft`, `experimental`) med taggen
-`urn:term-assistant:arbetsflode#forslag`. Alla koder kontrolleras med `$validate-code` innan
-något skrivs. Ett förslag får aldrig ta ett id eller en URL som en granskad resurs har. Bara
-utkast med taggen räknas som förslag, så en släppt resurs är skyddad även om en server behållit
-taggen.
+Koderna kontrolleras med `$validate-code` (ECL med `$expand`) och resursen sparas i
+MCP-serverns minne (`DraftStore`). Modellen får en sammanfattning och en adress
+(`utkast://ValueSet/…`), inte hela resursen, eftersom en ECL-expansion kan vara stor.
+Utkasten hämtas som MCP-resurser (`utkast://bundle`, `utkast://{typ}/{id}`), med
+`export_drafts` (Bundle) eller i klienterna som FHIR-Bundle eller FHIR-paket (.tgz,
+NPM-format). Ett utkast är märkt som förslag (`draft`, `experimental`, taggen
+`urn:term-assistant:arbetsflode#forslag`) och får inte ta en canonical URL som en granskad
+resurs på tjänsten redan har.
+
+Utkasten lever lika länge som MCP-serverprocessen. Klienterna startar en server per samtal,
+så utkasten följer samtalet och försvinner när det avslutas, om de inte har hämtats.
 
 **Fel** från terminologitjänsten blir verktygsfel med serverns meddelande
 (`ToolError`). MCP-SDK:n döljer annars texten i oväntade undantag, och då kan modellen
@@ -114,19 +113,26 @@ API-nyckel.
 Arbetsfördelningen mellan komponenterna följer den redaktionella kedjan:
 
 ```
- instruktion ─► MCP-servern ─► förslag (utkast, taggat) på terminologitjänsten
-                                   │
- Administrationsverktyget ◄────────┘  "Ta in som projekt"
+ instruktion ─► MCP-servern (läser) ─► utkast ─► FHIR-Bundle / FHIR-paket (.tgz)
+                                                     │  hämtas i klienten
+ Administrationsverktyget ◄──────────────────────────┘  "Förslag och utkast" → "Ta in fil"
    rätta, kontrollera mot tjänsten, redaktionell kedja, fyra ögon
-   └─► release ─► publicera till terminologitjänsten (ersätter förslaget) eller paketkatalogen
+   └─► release ─► publicera till terminologitjänsten eller paketkatalogen
 ```
+
+Filen är det enda som går mellan komponenterna. MCP-servern behöver ingen skrivrätt och
+administrationsverktyget behöver inte nå MCP-servern. Administrationsverktyget kan också
+lista utkast som någon annan har lagt på terminologitjänsten med förslagstaggen.
 
 * **AI:n föreslår, människan beslutar.** Förslagen bär utgivaren "Förslag från term-mcp (AI-stött,
   ej granskat)" och en motivering. Allt som släpps har gått genom administrationsverktyget.
-* **Samma id ersätter förslaget.** Projektet behåller förslagets namn och URL. När releasen
-  publiceras ersätter den därför förslaget i stället för att lägga en andra resurs med samma URL.
-  HAPI behåller taggar när en resurs uppdateras, så verktyget tar bort förslagstaggen med
-  `$meta-delete`. Det upptäcktes i testet mot HAPI.
+* **Samma id och URL som utkastet.** Projektet behåller utkastets namn och URL. Om ett utkast
+  ligger på terminologitjänsten ersätter releasen det vid publicering. HAPI behåller taggar när
+  en resurs uppdateras, så verktyget tar bort förslagstaggen med `$meta-delete`.
+* **Filintag.** En Bundle, en enskild resurs eller ett FHIR-paket läses i minnet, utan att
+  något packas upp på disk, med gränser för filstorlek (20 MB), uppackad storlek (100 MB) och
+  antal filer (2000). Urval, mappningar och översättningar kan tas in. Fullständiga kodsystem
+  läses in via Excel/CSV.
 * **Mappningsprojekt** (`kind = conceptmap`) har en rad per mappning, där radnumret är nyckel
   eftersom en källkod kan ha flera mål. Kodfälten söker i käll- respektive målkodsystemet via
   `$expand` med filter. Relationerna anges på svenska och översätts till R4 `equivalence` eller R5
@@ -137,10 +143,18 @@ Arbetsfördelningen mellan komponenterna följer den redaktionella kedjan:
   samma form som HL7 Sveriges språkpaket. Kontrollen mot kodsystemet hittar ändrade
   originaltexter (översättningen kan behöva ses över) och nya koder, som kan hämtas in. Eftersom
   HAPI inte använder supplement i `$lookup` läser MCP-servern dem själv och visar dem under
-  `translations`, med markering om de fortfarande är förslag.
+  `translations`. Översättningsutkast i samma session tas med och markeras som förslag.
 * **Webbgränssnittet** (`term-mcp-webb`) är gjort för demo. Varje samtal har en egen
   MCP-underprocess och en egen dialog, stegen strömmas med Server-Sent Events, och Claudes
-  markdown renderas på servern med HTML i texten neutraliserad.
+  markdown renderas på servern med HTML i texten neutraliserad. Utkasten listas bredvid samtalet
+  och hämtas som FHIR-paket, FHIR-Bundle eller enskilda resurser.
+
+**Administrationsverktyget direkt mot MCP-servern?** Det tillför lite. Administrationsverktyget
+pratar redan FHIR med terminologitjänsten för sökning, kontroll och expansion, och MCP är ett
+gränssnitt för språkmodeller. Att gå via MCP vore en omväg utan ny förmåga och skulle koppla
+ihop komponenterna. Värdet uppstår först om administrationsverktyget får en AI-assistent i
+projektet, till exempel "föreslå mål för de omappade raderna". Då kan assistenten använda
+MCP-serverns verktyg och spärrar i stället för att bygga egna.
 
 ## Paketbyggaren (`paketbyggare/`)
 
@@ -508,9 +522,10 @@ grupper i huvuden). Besluten:
 * **Fel konfiguration stoppar starten.** Med `TERM_PRODUCTION=1` vägras demoläget, http-issuer,
   kort sessionsnyckel och proxy som litar på alla adresser.
 
-MCP-servern och `term-mcp-webb` har ingen egen inloggning. I drift ska skrivande MCP
-(`TX_ALLOW_WRITE=1`) bara nå en test- eller förslagsmiljö, och webbgränssnittet ska ligga
-bakom samma inloggningsproxy eller vara privat.
+MCP-servern och `term-mcp-webb` har ingen egen inloggning och behöver ingen för
+terminologitjänsten om den är öppen, eftersom de bara läser. Webbgränssnittet använder
+däremot organisationens Claude-nyckel. Det ska därför vara privat eller ligga bakom samma
+inloggningsproxy.
 
 ## Värdemängdsdefinitioner
 

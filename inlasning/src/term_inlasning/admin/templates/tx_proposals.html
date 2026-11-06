@@ -1,29 +1,58 @@
 {% extends "base.html" %}
-{% block title %}Förslag från terminologitjänsten{% endblock %}
+{% block title %}Förslag och utkast{% endblock %}
 {% block content %}
-<div class="crumbs"><a href="/">Projekt</a> › Förslag från terminologitjänsten</div>
-<h1>Förslag från terminologitjänsten</h1>
-<p class="muted">Urval, mappningar och översättningar som MCP-servern (AI-stött) har skapat som utkast på
-<span class="mono">{{ tx }}</span>. Ta in ett förslag som projekt för att granska det, rätta det och släppa det
-genom den vanliga redaktionella kedjan. Förslaget på terminologitjänsten ändras inte.</p>
+<div class="crumbs"><a href="/">Projekt</a> › {% if file %}<a href="/tx-forslag">Förslag och utkast</a> › {{ file }}{% else %}Förslag och utkast{% endif %}</div>
+{% if file %}
+<h1>Utkast i {{ file }}</h1>
+<p class="muted">Ta in ett utkast som projekt för att granska det, rätta det och släppa det genom den vanliga
+redaktionella kedjan. Filen ändras inte.</p>
+{% else %}
+<h1>Förslag och utkast</h1>
+<p class="muted">Urval, mappningar och översättningar som har tagits fram med AI-stöd, till exempel i
+terminologiassistenten (MCP-klienten). Ta in dem som projekt för att granska, rätta och släppa dem genom den
+vanliga redaktionella kedjan.</p>
+{% if can('redaktör') %}
+<div class="panel">
+  <h2>Ta in fil</h2>
+  <p class="small muted">En FHIR-Bundle (.json), en enskild resurs eller ett FHIR-paket (.tgz), till exempel
+    utkast hämtade från terminologiassistenten. Urval (ValueSet), mappningar (ConceptMap) och översättningar
+    (CodeSystem-supplement) kan tas in.</p>
+  <form method="post" action="/forslag/fil" enctype="multipart/form-data" class="checks">
+    <input type="file" name="file" accept=".json,.tgz,.gz,application/json,application/gzip" required>
+    <button type="submit">Läs filen</button>
+  </form>
+</div>
+{% endif %}
+<h2>På terminologitjänsten</h2>
+<p class="small muted">Utkast märkta som förslag på <span class="mono">{{ tx }}</span>.</p>
+{% endif %}
 {% if error %}<div class="errors">{{ error }}</div>{% endif %}
-{% if not proposals and not error %}<div class="panel">Inga förslag just nu.</div>{% endif %}
+{% if not proposals and not error %}<div class="panel muted">Inga förslag {{ 'i filen' if file else 'på terminologitjänsten just nu' }}.</div>{% endif %}
 {% if proposals %}
 <table>
-  <tr><th>Typ</th><th>Förslag</th><th>Innehåll</th><th>Skapat</th><th></th></tr>
+  <tr><th>Typ</th><th>{{ 'Utkast' if file else 'Förslag' }}</th><th>Innehåll</th><th>Skapat</th><th></th></tr>
   {% for r in proposals %}
   {% set origin = r.resourceType ~ '/' ~ r.id ~ ' (' ~ r.url ~ '|' ~ (r.version or '-') ~ ')' %}
   <tr>
-    <td>{{ {'ConceptMap': 'Mappning', 'ValueSet': 'Urval', 'CodeSystem': 'Översättning'}.get(r.resourceType, r.resourceType) }}</td>
+    <td>{{ {'ConceptMap': 'Mappning', 'ValueSet': 'Urval', 'CodeSystem': 'Översättning' if r.content == 'supplement' else 'Kodsystem'}.get(r.resourceType, r.resourceType) }}</td>
     <td><b>{{ r.title or r.name or r.id }}</b><div class="mono small muted">{{ r.url }}</div>
       {% if r.description %}<div class="small">{{ r.description }}</div>{% endif %}</td>
-    <td class="small">{% if r.resourceType == 'CodeSystem' %}{{ r.language }} · översätter <span class="mono">{{ r.supplements }}</span>{% elif r.resourceType == 'ConceptMap' %}{% for g in r.group or [] %}<span class="mono">{{ g.source }}</span> → <span class="mono">{{ g.target }}</span>{% endfor %}{% endif %}</td>
+    <td class="small">
+      {% if r.resourceType == 'CodeSystem' %}{{ r.language }} · översätter <span class="mono">{{ r.supplements }}</span>
+      {% elif r.resourceType == 'ConceptMap' %}{% for g in r.group or [] %}<span class="mono">{{ g.source }}</span> → <span class="mono">{{ g.target }}</span>{% endfor %}
+      {% elif r.resourceType == 'ValueSet' %}
+        {% set incs = (r.compose or {}).get('include', []) %}
+        {% for i in incs %}{% for f in i.filter or [] %}<span class="mono">{{ f.value }}</span> ({{ (r.expansion or {}).get('total', '?') }} begrepp) {% endfor %}{% endfor %}
+        {% set n = incs|map(attribute='concept')|select|map('length')|sum %}{% if n %}{{ n }} listade koder{% endif %}
+      {% endif %}</td>
     <td class="small muted">{{ r.date or '' }}</td>
     <td>
       {% if origin in taken %}<span class="badge ok">taget in</span>
-      {% else %}
-      <form method="post" action="/tx-forslag/ta-in" class="inline">
-        <input type="hidden" name="type" value="{{ r.resourceType }}"><input type="hidden" name="id" value="{{ r.id }}">
+      {% elif r._reason %}<span class="small muted">{{ r._reason }}</span>
+      {% elif can('redaktör') %}
+      <form method="post" action="{{ take_url }}" class="inline">
+        {% if file %}<input type="hidden" name="index" value="{{ r._index }}">
+        {% else %}<input type="hidden" name="type" value="{{ r.resourceType }}"><input type="hidden" name="id" value="{{ r.id }}">{% endif %}
         <select name="namespace" aria-label="Namnrymd">{% for ns in settings.namespaces %}<option value="{{ ns.key }}">{{ ns.label }}</option>{% endfor %}</select>
         <button type="submit">Ta in som projekt</button>
       </form>

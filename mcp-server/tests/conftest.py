@@ -21,10 +21,23 @@ class FakeFhir(BaseHTTPRequestHandler):
     requests: list[str] = []
 
     def do_GET(self):  # noqa: N802
+        from urllib.parse import parse_qs, urlsplit
         FakeFhir.requests.append(self.path)
-        body = json.dumps(VALUESETS if self.path.startswith("/fhir/ValueSet") else
-                          {"resourceType": "CapabilityStatement", "fhirVersion": "4.0.1",
-                           "software": {"name": "Fake"}}).encode()
+        parts = urlsplit(self.path)
+        query = parse_qs(parts.query)
+        if parts.path.endswith("/$validate-code"):
+            data = {"resourceType": "Parameters", "parameter": [
+                {"name": "result", "valueBoolean": True},
+                {"name": "display", "valueString": f"Text för {query.get('code', ['?'])[0]}"}]}
+        elif parts.path.startswith("/fhir/ValueSet") or parts.path.startswith("/fhir/CodeSystem") \
+                or parts.path.startswith("/fhir/ConceptMap"):
+            wanted = query.get("url", [None])[0]
+            hits = [e for e in VALUESETS["entry"] if parts.path.startswith("/fhir/ValueSet")
+                    and (wanted is None or e["resource"]["url"] == wanted)]
+            data = {"resourceType": "Bundle", "type": "searchset", "entry": hits}
+        else:
+            data = {"resourceType": "CapabilityStatement", "fhirVersion": "4.0.1", "software": {"name": "Fake"}}
+        body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/fhir+json")
         self.send_header("Content-Length", str(len(body)))

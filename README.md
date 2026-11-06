@@ -7,8 +7,8 @@ varandra bara via FHIR: terminologitjänstens API och FHIR-paket.
 
 | Komponent | Gör | Kommando |
 |---|---|---|
-| [**Inläsningstjänsten**](inlasning/README.md) | Administrationsverktyget. Läser in kodverk och urval från Excel, CSV eller PDF. Förvaltar kodverk, urval, mappningar (ConceptMap) och översättningar (CodeSystem-supplement) med redaktionell kedja och releaser, granskar förslag från MCP-servern och publicerar releaser som FHIR-paket eller till terminologitjänsten | `term-inlasning` |
-| [**MCP-servern**](mcp-server/README.md) | Terminologiverktyg för AI-assistenter framför valfri FHIR-terminologitjänst. Kan skapa *förslag* på urval, mappningar och översättningar. Har ett webbgränssnitt och en terminalklient där Claude utför instruktioner på svenska | `term-mcp`, `term-mcp-webb`, `term-mcp-demo` |
+| [**Inläsningstjänsten**](inlasning/README.md) | Administrationsverktyget. Läser in kodverk och urval från Excel, CSV eller PDF. Förvaltar kodverk, urval, mappningar (ConceptMap) och översättningar (CodeSystem-supplement) med redaktionell kedja och releaser, tar in utkast från MCP-servern (Bundle eller paket) och publicerar releaser som FHIR-paket eller till terminologitjänsten | `term-inlasning` |
+| [**MCP-servern**](mcp-server/README.md) | Terminologiverktyg för AI-assistenter framför valfri FHIR-terminologitjänst. Läser bara: urval, mappningar och översättningar blir *utkast* som hämtas som FHIR-Bundle eller FHIR-paket. Har ett webbgränssnitt och en terminalklient där Claude utför instruktioner på svenska | `term-mcp`, `term-mcp-webb`, `term-mcp-demo` |
 | [**Paketbyggaren**](paketbyggare/README.md) | Bygger versionerade terminologipaket från tx-nordics och inläsningstjänstens releaser, som schemalagt jobb, och grundladdar terminologitjänster | `term-paket` |
 
 Till det kommer en [**mockad terminologitjänst**](mock-tx/README.md) (HAPI FHIR i Docker)
@@ -19,9 +19,9 @@ som grundladdas med paketen.
                                                                     ├─► Paketbyggaren ──► GitHub Release
  tx-nordics ────────────────────────────────────────────────────────┘    (schemalagt)        │
                                                                                               │ term-paket ladda
- Claude ◄─► term-mcp-webb ◄─MCP─► MCP-servern ◄──FHIR──► terminologitjänst (mock-tx/HAPI) ◄──┘
-                                     förslag (utkast) ──►        ▲            │ förslag
-                                                                 └─publicera─ Administrationsverktyget ◄┘
+ Claude ◄─► term-mcp-webb ◄─MCP─► MCP-servern ──läser──► terminologitjänst (mock-tx/HAPI) ◄──┘
+                │                                                  ▲
+                └─ utkast (.tgz/.json) ─► Administrationsverktyget ─┘ publicera
 ```
 
 Designen beskrivs i [docs/arkitektur.md](docs/arkitektur.md).
@@ -51,20 +51,21 @@ Designen beskrivs i [docs/arkitektur.md](docs/arkitektur.md).
 
 5. **Demo, del 1 – låt AI:n föreslå.** Instruera i terminologiassistenten (port 8001), till exempel:
    - "Föreslå en mappning från norska civilstånd (no-basis-marital-status) till HL7 v3 MaritalStatus.
-     Visa tabellen först." Svara sedan "Skapa förslaget."
+     Visa tabellen först." Svara sedan "Gör utkastet."
    - "Föreslå en svensk översättning av de norska familjerelationerna."
    - "Föreslå ett urval av civilstånd för ett vårdregister: gift, ogift, skild och änka/änkling."
 
-   Förslagen skapas som utkast på HAPI och syns i panelen till höger.
+   MCP-servern läser bara: inget skrivs till terminologitjänsten. Utkasten syns i panelen till
+   höger. Hämta dem med **Hämta FHIR-paket (.tgz)**.
 
 6. **Demo, del 2 – granska och förvalta.** I administrationsverktyget (port 8000):
-   1. Öppna **Förslag från terminologitjänsten** och välj **Ta in som projekt**.
+   1. Öppna **Förslag och utkast**, välj **Ta in fil** med paketet och sedan **Ta in som projekt**.
    2. Rätta mappningarna. Kodfälten söker i målkodsystemet.
    3. Kör **Kontrollera mappningen**.
    4. Skapa en releasekandidat som anna och godkänn den som bertil (byt användare uppe till höger).
    5. Publicera till **Mockad terminologitjänst**.
 
-   Den granskade versionen ersätter då förslaget på HAPI, och assistenten använder den direkt:
+   Den granskade versionen finns då på HAPI, och assistenten använder den direkt:
    "Översätt den norska koden gift till HL7 v3."
 
    Översättningsförslag tas in på samma sätt. Översätt de koder som saknas, släpp och publicera.

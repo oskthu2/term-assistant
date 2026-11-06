@@ -6,7 +6,7 @@ MCP – klienten pratar aldrig själv med terminologitjänsten.
 
     term-mcp-demo "Vilka civilstånd finns i HL7 Sveriges värdemängd?"
     term-mcp-demo                              # dialog, flera instruktioner i rad
-    term-mcp-demo --forslag "Föreslå en mappning från norska civilstånd till HL7 v3 MaritalStatus"
+    term-mcp-demo --spara utkast.tgz "Föreslå en mappning från norska civilstånd till HL7 v3 MaritalStatus"
     term-mcp-demo --verktyg                    # lista verktygen (ingen API-nyckel behövs)
     term-mcp-demo --anropa lookup_code '{"system": "...", "code": "M"}'
 
@@ -41,27 +41,48 @@ URL) innan du slår upp enskilda koder.
 
 Förslag (urval, mappningar, översättningar) bygger du på kodernas egna texter och
 definitioner som du hämtat med verktygen. Redovisa förslaget som en tabell innan
-du skapar det, motivera relationer som inte är likvärdiga och peka ut koder som
-saknar motsvarighet. Förslag får canonical URL:er under http://example.org/fhir/
-om användaren inte anger något annat. Säg exakt vad som skapades (canonical URL,
-antal koder) och att det granskas i administrationsverktyget innan det släpps.
-Svara på svenska, kort och sakligt, gärna med en tabell när du listar koder."""
+du gör utkastet, motivera relationer som inte är likvärdiga och peka ut koder som
+saknar motsvarighet. Utkast får canonical URL:er under http://example.org/fhir/
+om användaren inte anger något annat. Inget skrivs till terminologitjänsten:
+utkasten hämtas som FHIR-Bundle eller FHIR-paket och tas in i
+administrationsverktyget, där de granskas innan de släpps. Säg exakt vilket utkast
+som skapades (canonical URL, antal koder). Svara på svenska, kort och sakligt,
+gärna med en tabell när du listar koder."""
 
 EXAMPLES = [
     "Vilka svenska och norska kodsystem och värdemängder finns på tjänsten?",
     "Lista civilstånden i HL7 Sveriges värdemängd för civilstånd, med svensk text där den finns.",
     "Översätt SNOMED CT-koden 44054006 till ICD-10 med hjälp av en ConceptMap på tjänsten.",
     "Föreslå en mappning från norska civilstånd (no-basis-marital-status) till HL7 v3 MaritalStatus. "
-    "Visa tabellen först och skapa förslaget när jag säger till.",
+    "Visa tabellen först och gör utkastet när jag säger till.",
     "Föreslå en svensk översättning av de norska familjerelationerna (no-basis-family-relation).",
     "Föreslå ett urval av civilstånd för ett vårdregister: gift, ogift, skild och änka/änkling.",
 ]
 
 
-def server_parameters(tx_url: str, allow_write: bool) -> StdioServerParameters:
+def server_parameters(tx_url: str) -> StdioServerParameters:
     """MCP-servern i samma Python-miljö, med vald terminologitjänst."""
-    env = {**os.environ, "TX_BASE_URL": tx_url, "TX_ALLOW_WRITE": "1" if allow_write else "0"}
+    env = {**os.environ, "TX_BASE_URL": tx_url}
     return StdioServerParameters(command=sys.executable, args=["-m", "term_mcp.server"], env=env)
+
+
+async def read_drafts(session: ClientSession) -> list[dict]:
+    """Utkasten i MCP-serverns minne, via MCP-resursen utkast://bundle."""
+    result = await session.read_resource("utkast://bundle")
+    bundle = json.loads(result.contents[0].text)
+    return [e["resource"] for e in bundle.get("entry", [])]
+
+
+def save_drafts(resources: list[dict], path: str) -> str:
+    """Spara utkasten som FHIR-paket (.tgz) eller FHIR-Bundle (annars JSON)."""
+    from .drafts import bundle, package
+    from pathlib import Path
+    target = Path(path)
+    if target.suffix in (".tgz", ".gz"):
+        target.write_bytes(package(resources))
+    else:
+        target.write_text(json.dumps(bundle(resources), ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(target)
 
 
 @asynccontextmanager
@@ -202,23 +223,36 @@ async def call_tool(params: StdioServerParameters, name: str, arguments: dict, o
         return data
 
 
-async def chat(params: StdioServerParameters, instruction: str | None, anthropic_client=None) -> None:
+async def chat(params: StdioServerParameters, instruction: str | None, anthropic_client=None,
+               save_to: str | None = None) -> None:
     async with connect(params) as session:
         dialog = Session(session, anthropic_client)
-        if instruction:
-            await dialog.ask(instruction)
-            return
-        print("Skriv en instruktion (tom rad avslutar). Exempel:")
-        for example in EXAMPLES:
-            print(f"  • {example}")
-        while True:
-            try:
-                line = await asyncio.to_thread(input, "\n> ")
-            except EOFError:
-                break
-            if not line.strip() or line.strip().lower() in ("sluta", "exit", "quit"):
-                break
-            await dialog.ask(line)
+        try:
+            await _dialog(dialog, instruction)
+        finally:
+            resources = await read_drafts(session)
+            if resources and save_to:
+                print(f"\n{len(resources)} utkast sparade i {save_drafts(resources, save_to)} – ta in filen i "
+                      "administrationsverktyget (Förslag → Ta in fil).")
+            elif resources:
+                print(f"\n{len(resources)} utkast skapades men sparades inte. Använd --spara utkast.tgz.")
+
+
+async def _dialog(dialog: Session, instruction: str | None) -> None:
+    if instruction:
+        await dialog.ask(instruction)
+        return
+    print("Skriv en instruktion (tom rad avslutar). Exempel:")
+    for example in EXAMPLES:
+        print(f"  • {example}")
+    while True:
+        try:
+            line = await asyncio.to_thread(input, "\n> ")
+        except EOFError:
+            break
+        if not line.strip() or line.strip().lower() in ("sluta", "exit", "quit"):
+            break
+        await dialog.ask(line)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -226,20 +260,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("instruction", nargs="?", help="Instruktion; utan instruktion startar en dialog")
     parser.add_argument("--tx", default=os.environ.get("TX_BASE_URL") or LOCAL_TX,
                         help=f"Terminologitjänstens FHIR-bas (standard TX_BASE_URL eller {LOCAL_TX})")
-    parser.add_argument("--forslag", "--skriv", dest="skriv", action="store_true",
-                        help="Tillåt förslagsverktygen: urval, mappningar och översättningar (bara mot en testserver)")
+    parser.add_argument("--spara", metavar="FIL",
+                        help="Spara utkasten när dialogen är slut: .tgz ger ett FHIR-paket, annars en FHIR-Bundle (JSON)")
     parser.add_argument("--verktyg", action="store_true", help="Lista MCP-serverns verktyg och avsluta")
     parser.add_argument("--anropa", nargs="+", metavar=("VERKTYG", "JSON"),
                         help="Anropa ett verktyg direkt med argument som JSON, utan Claude")
     args = parser.parse_args(argv)
-    params = server_parameters(args.tx, args.skriv)
+    params = server_parameters(args.tx)
     if args.verktyg:
         asyncio.run(list_tools(params))
     elif args.anropa:
         arguments = json.loads(args.anropa[1]) if len(args.anropa) > 1 else {}
         asyncio.run(call_tool(params, args.anropa[0], arguments))
     else:
-        asyncio.run(chat(params, args.instruction))
+        asyncio.run(chat(params, args.instruction, save_to=args.spara))
 
 
 if __name__ == "__main__":

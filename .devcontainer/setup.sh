@@ -60,7 +60,7 @@ Klart! Tre fristående komponenter och en mockad terminologitjänst:
 
   2. Terminologiassistenten – instruera MCP-servern i webbläsaren (port 8001, kräver ANTHROPIC_API_KEY):
        term-mcp-webb --host 0.0.0.0
-     eller i terminalen:  term-mcp-demo --forslag
+     eller i terminalen:  term-mcp-demo --spara utkast.tgz
 
   3. Administrationsverktyget (port 8000) – granska förslag, förvalta kodverk, urval och mappningar:
        TX_PUBLISH=1 term-inlasning admin --workspace arbetsyta --host 0.0.0.0 --port 8000
