@@ -1,0 +1,20 @@
+{
+  "name": "se.exempel.terminologi.npu",
+  "title": "NPU – laboratorieterminologi",
+  "description": "Hela NPU-terminologin (Nomenclature for Properties and Units) och dess egenskapskodsystem, hämtade från tx-nordics. Behövs för att kontrollera urval av laboratorieanalyser mot den mockade terminologitjänsten.",
+  "fhirVersion": "4.0.1",
+  "firstVersion": "1.0.0",
+  "author": "Exempelorganisationen",
+  "classification": {"system": "http://terminology.hl7.org/CodeSystem/v3-Confidentiality", "code": "U", "display": "unrestricted"},
+  "sources": [
+    {
+      "type": "fhir",
+      "base": "https://tx-nordics.fhir.org/fhir",
+      "include": [
+        {"resourceType": "CodeSystem", "url": "http://npu-terminology.org", "allowLarge": true},
+        {"resourceType": "CodeSystem", "url": "http://npu-terminology.org/property"},
+        {"resourceType": "ValueSet", "url": "http://npu-terminology.org/fhir/ValueSet/NPUFull"}
+      ]
+    }
+  ]
+}

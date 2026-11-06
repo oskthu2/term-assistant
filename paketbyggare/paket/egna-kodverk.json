@@ -1,0 +1,19 @@
+{
+  "name": "se.exempel.terminologi.egna",
+  "title": "Egna kodverk",
+  "description": "Kodverk och urval som förvaltas i inläsningstjänsten (senaste release per projekt). Informationsklass intern: får spridas inom vård och omsorg och till avtalade parter.",
+  "fhirVersion": "4.0.1",
+  "firstVersion": "1.0.0",
+  "author": "Exempelorganisationen",
+  "classification": {
+    "system": "http://terminology.hl7.org/CodeSystem/v3-Confidentiality",
+    "code": "N",
+    "display": "normal"
+  },
+  "sources": [
+    {
+      "type": "packages",
+      "path": "../../arbetsyta/paket"
+    }
+  ]
+}

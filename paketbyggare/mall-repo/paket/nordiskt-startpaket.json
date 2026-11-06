@@ -1,0 +1,76 @@
+{
+  "name": "se.exempel.terminologi.nordisk",
+  "title": "Nordiskt startpaket",
+  "description": "Kodverk, värdemängder och mappningar från HL7 Sverige och HL7 Norge, hämtade från tx-nordics. För grundladdning av test- och utvecklingsmiljöer.",
+  "fhirVersion": "4.0.1",
+  "firstVersion": "1.0.0",
+  "maxConcepts": 5000,
+  "author": "Exempelorganisationen",
+  "classification": {
+    "system": "http://terminology.hl7.org/CodeSystem/v3-Confidentiality",
+    "code": "U",
+    "display": "unrestricted"
+  },
+  "sources": [
+    {
+      "type": "fhir",
+      "base": "https://tx-nordics.fhir.org/fhir",
+      "include": [
+        {
+          "resourceType": "ValueSet",
+          "url": "http://hl7.se/fhir/ig/base/ValueSet/SEBaseMaritalStatusVS",
+          "withCodeSystems": true
+        },
+        {
+          "resourceType": "ValueSet",
+          "url": "http://hl7.se/fhir/ig/base/ValueSet/SecurityLabelVS",
+          "withCodeSystems": true
+        },
+        {
+          "resourceType": "ValueSet",
+          "url": "http://hl7.se/fhir/ig/base/ValueSet/SEBaseNamePartQualifierVS",
+          "withCodeSystems": true
+        },
+        {
+          "resourceType": "CodeSystem",
+          "url": "http://hl7.se/fhir/ig/langpack/CodeSystem/cs-sv-administrative-gender"
+        },
+        {
+          "resourceType": "CodeSystem",
+          "url": "http://hl7.se/fhir/ig/langpack/CodeSystem/cs-sv-v3-MaritalStatus"
+        },
+        {
+          "resourceType": "CodeSystem",
+          "url": "http://npu-terminology.org/property"
+        },
+        {
+          "resourceType": "ValueSet",
+          "url": "http://hl7.no/fhir/ValueSet/no-basis-marital-status",
+          "withCodeSystems": true
+        },
+        {
+          "resourceType": "ValueSet",
+          "url": "http://hl7.no/fhir/ValueSet/no-basis-family-relation",
+          "withCodeSystems": true
+        },
+        {
+          "resourceType": "ValueSet",
+          "url": "http://hl7.no/fhir/ValueSet/no-basis-connection-type",
+          "withCodeSystems": true
+        },
+        {
+          "resourceType": "ConceptMap",
+          "url": "https://hl7.se/fhir/ConceptMap/snomed-to-icd10-diabetes-sample"
+        },
+        {
+          "resourceType": "ConceptMap",
+          "url": "https://hl7.se/fhir/ConceptMap/snomed-to-icd10-hypertension-sample"
+        },
+        {
+          "resourceType": "ConceptMap",
+          "url": "http://ehelse.no/fhir/ConceptMap/3401-mapping"
+        }
+      ]
+    }
+  ]
+}

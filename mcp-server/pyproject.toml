@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "term-mcp"
+version = "0.1.0"
+description = "MCP-server framför en valfri FHIR-terminologitjänst, med en demo-klient där Claude styr verktygen."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx2>=2.13",
+    "mcp>=2.3",
+]
+
+[project.optional-dependencies]
+demo = ["anthropic[mcp]>=2.1"]
+dev = ["pytest>=8", "anthropic[mcp]>=2.1"]
+
+[project.scripts]
+term-mcp = "term_mcp.server:main"
+term-mcp-demo = "term_mcp.demo:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

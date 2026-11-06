@@ -1,0 +1,27 @@
+# Testerna för de tre komponenterna, var för sig – de delar ingen kod och installeras separat.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        komponent:
+          - { katalog: inlasning, extra: "dev,pdf" }
+          - { katalog: mcp-server, extra: "dev" }
+          - { katalog: paketbyggare, extra: "dev" }
+    defaults:
+      run:
+        working-directory: ${{ matrix.komponent.katalog }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[${{ matrix.komponent.extra }}]"
+      - run: python -m pytest -q

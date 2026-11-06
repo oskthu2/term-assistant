@@ -2,19 +2,19 @@
 # Körs en gång när Codespace/devcontainern skapas.
 set -euo pipefail
 
-echo "== Installerar term-assistant med AI-, PDF- och teststöd"
+echo "== Installerar de tre komponenterna (var för sig)"
 python -m pip install --upgrade pip >/dev/null
-python -m pip install -e '.[dev,ai,pdf]'
+python -m pip install -e './inlasning[dev,ai,pdf]' -e './mcp-server[dev]' -e './paketbyggare[dev]'
 
-echo "== Skapar exempelfiler (examples/*.xlsx, *.pdf)"
-python examples/make_examples.py
+echo "== Skapar exempelfiler (inlasning/examples/*.xlsx, *.pdf)"
+python inlasning/examples/make_examples.py
 
-echo "== Förbereder arbetsytan ./arbetsyta"
+echo "== Förbereder inläsningstjänstens arbetsyta ./arbetsyta"
 mkdir -p arbetsyta/paket
 if [ ! -f arbetsyta/settings.json ]; then
   python - <<'PY'
 from pathlib import Path
-from term_assistant.admin.settings import Editorial, Namespace, Settings, Target
+from term_inlasning.admin.settings import Editorial, Namespace, Settings, Target
 
 root = Path("arbetsyta")
 Settings(
@@ -22,8 +22,10 @@ Settings(
                           oid_root="1.2.752.999", publisher="Exempelorganisationen",
                           package_prefix="se.exempel.kodverk")],
     targets=[
-        Target(key="paket", label="Inläsningskatalog (arbetsyta/paket)", kind="package-dir",
-               directory=str(root.resolve() / "paket"), max_classification="intern"),
+        Target(key="paket", label="Paketkatalog (arbetsyta/paket – paketbyggaren läser härifrån)",
+               kind="package-dir", directory=str(root.resolve() / "paket"), max_classification="intern"),
+        Target(key="mock-tx", label="Mockad terminologitjänst (HAPI, localhost:8080)", kind="fhir-api",
+               base_url="http://localhost:8080/fhir", max_classification="intern"),
         Target(key="tx-nordics", label="tx-nordics (publik testserver)", kind="fhir-api",
                base_url="https://tx-nordics.fhir.org/fhir", max_classification="öppen"),
     ],
@@ -41,14 +43,30 @@ if [ ! -f "$JAR" ]; then
     || { echo "Kunde inte hämta validatorn – appen fungerar ändå, med den inbyggda kontrollen."; rm -f "$JAR"; }
 fi
 
+echo "== Hämtar HAPI-avbildningen för den mockade terminologitjänsten"
+docker pull -q hapiproject/hapi:v8.12.0-2 || echo "Kunde inte hämta HAPI nu – mock-tx/starta.sh försöker igen."
+
 echo "== Kör testerna"
-python -m pytest -q
+for komponent in inlasning mcp-server paketbyggare; do
+  (cd "$komponent" && python -m pytest -q)
+done
 
 cat <<'MSG'
 
-Klart! Starta administrationsvyn med:
+Klart! Tre fristående komponenter:
 
-    term-assistant admin --workspace arbetsyta --host 0.0.0.0 --port 8000
+  Inläsningstjänsten (webbapp, port 8000):
+      term-inlasning admin --workspace arbetsyta --host 0.0.0.0 --port 8000
 
-Byt användare (anna/bertil) uppe till höger för att prova granskning och fyra ögon.
+  Mockad terminologitjänst (HAPI, port 8080), grundladdad med paket från tx-nordics:
+      mock-tx/starta.sh
+
+  MCP-servern via demo-klienten (Claude kräver ANTHROPIC_API_KEY):
+      term-mcp-demo --verktyg
+      term-mcp-demo "Vilka civilstånd finns i HL7 Sveriges värdemängd?"
+
+  Paketbyggaren:
+      term-paket bygg paketbyggare/paket/nordiskt-startpaket.json --ut paketbyggare/dist
+
+Byt användare (anna/bertil) uppe till höger i webbappen för att prova granskning och fyra ögon.
 MSG

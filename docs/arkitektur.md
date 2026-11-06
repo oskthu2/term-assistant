@@ -1,27 +1,43 @@
 # Arkitektur
 
-## Översikt
+## Tre fristående komponenter
 
 ```
-                ┌─────────────────────────────┐
-  AI-assistent  │  MCP-server (term-assistant)│        valfri FHIR-terminologitjänst
-  (Claude …) ◄─►│  terminologiverktyg ────────┼──────► Inera / tx.nordics / tx.fhir.org
-                │  inläsningsverktyg          │        ($lookup, $expand, $translate …)
-                └──────────┬──────────────────┘
-                           │
-           Excel ──► inläsning ──► mall ──► FHIR CodeSystem (draft) ──► release ──► PUT till tjänsten
-                           │         │
-                    egenskapsregister└──► administrationsvy (genereras från mallen)
+ Excel ─► Inläsningstjänsten ──release (.tgz)──► arbetsyta/paket ─┐
+          (term-inlasning)                                          ├─► Paketbyggaren ──► GitHub Release
+ tx-nordics ────────────────────────────────────────────────────────┘    (term-paket,         │
+                                                                          schemalagt)          │ term-paket ladda
+ Claude ◄─► term-mcp-demo ◄─MCP─► MCP-servern ◄──FHIR──► terminologitjänst ◄────────────────────┘
+                                   (term-mcp)             (Inera / tx-nordics / mock-tx = HAPI)
 ```
 
-Terminologitjänsten är alltid sanningskällan. term-assistant har ingen egen
-datamodell för begrepp. Den har bara två egna artefakter:
+| Komponent | Ansvar | Egna artefakter | Pratar med |
+|---|---|---|---|
+| Inläsningstjänsten (`inlasning/`) | Excel → mall → förvaltning → release | egenskapsregistret, mallarna, arbetsytan (projekt, releaser, journal) | terminologitjänsten (kontroll av urval, publicering), paketkatalogen (skriver) |
+| MCP-servern (`mcp-server/`) | terminologiverktyg för AI-assistenter | inga | terminologitjänsten |
+| Paketbyggaren (`paketbyggare/`) | versionerade paket för distribution, grundladdning | paketbeskrivningar, byggda paket och flöden | FHIR-servrar (läser), paketkataloger (läser), terminologitjänster (grundladdar) |
 
-* **egenskapsregistret** – vilka egenskaper och designation-typer som är tillåtna
-  och vilka kolumnrubriker som betyder vad;
-* **mallen** – hur ett visst kodverk läses in och presenteras.
+**Fristående** betyder här:
 
-## Ben 1: MCP mot valfri terminologitjänst
+* ingen delad kod: inläsningstjänsten och MCP-servern har var sin kopia av den lilla
+  FHIR-klienten
+* egna beroenden: MCP-servern behöver inte openpyxl eller Starlette, och paketbyggaren
+  behöver bara `httpx2`
+* egna tester, och separat installation och driftsättning
+* gränssnitten är standard: FHIR REST-API:t och FHIR NPM-paket. Komponenterna kan bytas
+  ut var för sig, till exempel paketbyggaren mot FHIR-communityns egna verktyg, eller
+  mock-tjänsten mot Ineras.
+
+Terminologitjänsten är alltid sanningskällan. Ingen komponent har en egen
+datamodell för begrepp.
+
+Uppdelningen gjorde också några gränser tydligare. Inläsningsverktygen som tidigare
+låg i MCP-servern (`assess_workbook`, `propose_import`, `confirm_mapping`,
+`registry_*`) finns nu bara i inläsningstjänsten: webbappen, `term-inlasning` och
+registerskörden `term-inlasning harvest`. MCP-servern ser inläsningstjänstens kodverk
+först när de publicerats till terminologitjänsten, direkt eller via ett paket.
+
+## MCP-servern (`mcp-server/`)
 
 `TerminologyClient` använder bara FHIR R4-standardoperationer, så samma server
 fungerar mot alla tjänster. Val av tjänst görs med `TX_BASE_URL`. Autentisering
@@ -36,8 +52,64 @@ inte bara direkta barn, och svaret markerar det med `descendants`.
 
 Titelsökning görs med `title:contains` men filtreras även lokalt, eftersom
 servrar stöder sökparametrar olika (tx.fhir.org ignorerar t.ex. `title:contains`).
+`ValueSet/$validate-code` utan `system` misslyckas på HAPI. Verktyget hämtar då
+systemet ur expansionen och försöker igen.
 
-## Ben 2: Inläsning – från kalkylark till mall
+**Skrivverktyg** (`create_valueset`, `upsert_resource`) registreras bara med
+`TX_ALLOW_WRITE=1`. Modellen ser dem alltså inte mot en produktionstjänst.
+`create_valueset` validerar varje kod först, och okända koder stoppar skapandet.
+
+**Fel** från terminologitjänsten blir verktygsfel med serverns meddelande
+(`ToolError`). MCP-SDK:n döljer annars texten i oväntade undantag, och då kan modellen
+inte rätta sig.
+
+**Demo-klienten** (`term-mcp-demo`) startar servern som underprocess och låter Claude
+(`claude-opus-5-5`, effort `medium`, server-side fallback) arbeta med verktygen via
+SDK:ns tool runner och MCP-hjälparna (`async_mcp_tool`). Hela dialogen, med
+verktygsanrop och verktygssvar, sparas mellan instruktionerna. Därför kan man fråga
+vidare ("och vad betyder den andra koden?"). `--verktyg` och `--anropa` fungerar utan
+API-nyckel.
+
+## Paketbyggaren (`paketbyggare/`)
+
+Ett paket beskrivs deklarativt (`paket/*.json`) med källor: canonical URL:er på en
+FHIR-server, eller en katalog med FHIR-paket. Bygget:
+
+1. **hämtar** hela resurser. tx-nordics svarar annars i sammanfattat läge
+   (`SUBSETTED`), och en sådan resurs avvisas så att ett paket aldrig töms tyst
+2. **följer beroenden**: med `withCodeSystems` hämtas de kodsystem ett ValueSet bygger
+   på. Saknade kodsystem (SNOMED CT, HSA-kodverk) och för stora kodsystem rapporteras
+3. **normaliserar**: serverns lagringsmetadata tas bort, id görs giltiga och unika, och
+   informationsklassen läggs i `meta.security`
+4. **jämför** med föregående version per canonical URL och räknar fram semver.
+   Oförändrat ger inget nytt paket
+5. **skriver** paketet, ändringslogg och `<namn>.feed.json`
+
+**Informationsklass:** paketets klass är ett tak. En resurs med striktare märkning,
+till exempel ett internt kodverk från inläsningstjänsten i det öppna startpaketet,
+stoppar bygget. Därför finns två paket med olika klass: `nordiskt-startpaket` (U) och
+`egna-kodverk` (N). Det upptäcktes när inläsningstjänstens release först lades i
+startpaketet.
+
+**Schemalagt jobb:** `.github/workflows/terminologipaket.yml` (eller kopian i
+`paketbyggare/mall-repo/` för ett eget distributionsrepo) bygger varje vecka.
+Jobbet testladdar paketet i en HAPI-tjänstecontainer och publicerar en GitHub Release
+bara när innehållet ändrats. Releasernas URL:er är det som mock-tjänster och
+testmiljöer grundladdas från.
+
+## Mockad terminologitjänst (`mock-tx/`)
+
+HAPI FHIR 8.12 (R4) i Docker räcker för utveckling och demo. Två inställningar
+behövs: fulltextindex (Lucene i minnet), annars fungerar inte `$expand` och
+`$validate-code`, och klienttilldelade id. `term-paket ladda` skickar resurserna
+med `PUT` på sina id, så att en ny paketversion ersätter den gamla.
+
+Begränsningar: HAPI använder inte supplement (de svenska språkpaketen) för
+displaytexter, och förstår bara hierarkier som nästlade begrepp eller `parent`, inte
+v3-kodsystemens `subsumedBy`. Det räcker för att utveckla och demonstrera mot, men
+inte för att utvärdera svenska displaytexter.
+
+## Inläsningstjänsten: från kalkylark till mall
 
 ### Kvalitetsgrind (`assess.py`)
 
@@ -173,7 +245,7 @@ hundra varianter av "kommentar". Det hanteras med flera samverkande mekanismer:
 |---|---|
 | **Fröregister** med FHIR:s `concept-properties` (comment, notSelectable, itemWeight …) och SNOMED-designation-typer (synonym, FSN) | `registry._SEED` |
 | **Livscykelregler**: förvaltningskolumner (status, tillagd, borttagen, ersätts av, senast ändrad …) är ingen egenskap utan en egen roll med fasta mål, se nedan | `lifecycle.py` |
-| **Skörd** av `CodeSystem.property` från kodverk som redan finns på tjänsten. Det som används där återanvänds. | `registry.harvest`, MCP `registry_harvest` |
+| **Skörd** av `CodeSystem.property` från kodverk som redan finns på tjänsten. Det som används där återanvänds. | `registry.harvest`, `term-inlasning harvest` |
 | **Alias-inlärning**: varje bekräftad mappning gör rubriken till ett alias, så nästa ark mappas automatiskt med hög säkerhet | `registry.learn` |
 | **Användningsvikt**: bland likvärdiga kandidater vinner den som redan används mest | `registry.match` |
 | **Spärr mot dubbletter**: en ny egenskap med samma kod eller URI som en befintlig avvisas | `registry.add_property` |
@@ -417,7 +489,7 @@ Relevanta internationella IG:er:
 
 Varje releasekandidat profilvalideras inbyggt mot Shareable-profilernas krav
 och resursernas invarianter (`importer/validate.py`). Fel spärrar kandidaten,
-varningar visas. På releasesidan, eller med `term-assistant validate-package`,
+varningar visas. På releasesidan, eller med `term-inlasning validate-package`,
 kan dessutom HL7:s officiella validator köras på paketet
 (`FHIR_VALIDATOR_JAR`), utan eller mot terminologitjänsten.
 

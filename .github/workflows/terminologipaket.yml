@@ -1,0 +1,94 @@
+# Schemalagt jobb: bygg versionerade terminologipaket och publicera dem som GitHub Releases.
+#
+# Varje vecka (och vid manuell körning) byggs paketen i paketbyggare/paket/*.json. Jobbet jämför med
+# senast publicerade version och skapar en ny release bara när innehållet ändrats (semver: borttagen
+# resurs = major, ny resurs/ny version = minor, ändrat innehåll = patch). Paketet testladdas i en
+# HAPI-server innan det publiceras. Mall för ett separat distributionsrepo: paketbyggare/mall-repo/.
+name: Terminologipaket
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"   # måndagar 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      tvinga:
+        description: "Bygg en ny patch-version även om inget ändrats"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: terminologipaket
+  cancel-in-progress: false
+
+jobs:
+  bygg:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        paket: [paketbyggare/paket/nordiskt-startpaket.json]
+    services:
+      hapi:
+        image: hapiproject/hapi:v8.12.0-2
+        ports: ["8080:8080"]
+        env:
+          hapi.fhir.fhir_version: R4
+          spring.jpa.properties.hibernate.search.enabled: "true"
+          spring.jpa.properties.hibernate.search.backend.type: lucene
+          spring.jpa.properties.hibernate.search.backend.directory.type: local-heap
+          spring.jpa.properties.hibernate.search.backend.analysis.configurer: ca.uhn.fhir.jpa.search.HapiHSearchAnalysisConfigurers$HapiLuceneAnalysisConfigurer
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installera paketbyggaren
+        run: pip install ./paketbyggare
+
+      - name: Hämta senast publicerade version
+        id: tidigare
+        run: |
+          name=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "${{ matrix.paket }}")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
+          tag=$(gh release list --limit 100 --json tagName --jq "[.[] | select(.tagName | startswith(\"$name-v\"))][0].tagName // empty")
+          if [ -n "$tag" ]; then
+            gh release download "$tag" --pattern "$name-*.tgz" --pattern "$name.feed.json" --dir dist
+            echo "Föregående: $tag"
+          else
+            echo "Inget tidigare paket – bygger första versionen."
+          fi
+
+      - name: Bygg (bara om innehållet ändrats)
+        id: bygg
+        run: term-paket bygg "${{ matrix.paket }}" --ut dist --github-output ${{ inputs.tvinga && '--tvinga' || '' }}
+
+      - name: Testladda i HAPI
+        if: steps.bygg.outputs.changed == 'true'
+        run: |
+          for i in $(seq 1 60); do curl -sf http://localhost:8080/fhir/metadata > /dev/null && break; sleep 5; done
+          term-paket ladda "${{ steps.bygg.outputs.file }}" --server http://localhost:8080/fhir --vanta 300
+          curl -sf "http://localhost:8080/fhir/CodeSystem?_summary=count"
+
+      - name: Publicera release
+        if: steps.bygg.outputs.changed == 'true'
+        run: |
+          gh release create "${{ steps.bygg.outputs.name }}-v${{ steps.bygg.outputs.version }}" \
+            "${{ steps.bygg.outputs.file }}" "dist/${{ steps.bygg.outputs.name }}.feed.json" \
+            --title "${{ steps.bygg.outputs.name }} ${{ steps.bygg.outputs.version }}" \
+            --notes-file "${{ steps.bygg.outputs.notes }}"
+
+      - name: Sammanfattning
+        run: |
+          if [ "${{ steps.bygg.outputs.changed }}" = "true" ]; then
+            cat "${{ steps.bygg.outputs.notes }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Oförändrat sedan ${{ steps.bygg.outputs.version }} – ingen ny release." >> "$GITHUB_STEP_SUMMARY"
+          fi
