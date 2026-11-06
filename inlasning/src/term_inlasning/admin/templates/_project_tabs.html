@@ -7,6 +7,7 @@
   {% for name in data_all.keys() %}
   <a href="/p/{{ project.id }}/s/{{ quote(name) }}" class="{{ 'active' if active == 'sheet:' ~ name }}">{{ name }}</a>
   {% endfor %}
+  {% if can('redaktör') %}<a href="/p/{{ project.id }}/assistent" class="{{ 'active' if active == 'assistant' }}">AI-assistent</a>{% endif %}
   <a href="/p/{{ project.id }}/proposals" class="{{ 'active' if active == 'proposals' }}">Förslag{% if open_proposals %} <span class="badge warn">{{ open_proposals }}</span>{% endif %}</a>
   <a href="/p/{{ project.id }}/columns" class="{{ 'active' if active == 'columns' }}">Kolumner</a>
   <a href="/p/{{ project.id }}/releases" class="{{ 'active' if active == 'releases' }}">Releaser</a>

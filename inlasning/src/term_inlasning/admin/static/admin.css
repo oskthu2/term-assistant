@@ -70,3 +70,17 @@ form.checks label { display: inline-flex; align-items: center; gap: 4px; margin:
 form.checks input[type=checkbox] { width: auto; margin: 0; }
 form.checks input[name=username] { width: 14em; }
 header .roles .badge { margin-left: 2px; }
+
+/* AI-assistenten i projektet */
+.assistant #log { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.assistant .msg { padding: 10px 12px; border-radius: 8px; max-width: 100%; overflow-x: auto; }
+.assistant .msg.user { align-self: flex-end; background: var(--accent-weak, #e7eefb); max-width: 80%; }
+.assistant .msg.assistant table { border-collapse: collapse; margin: 6px 0; }
+.assistant .msg.assistant th, .assistant .msg.assistant td { border: 1px solid var(--line, #dde1e8); padding: 4px 8px; }
+.assistant details.tool { font-size: 13px; border: 1px solid var(--line, #dde1e8); border-radius: 6px; padding: 6px 10px; }
+.assistant details.tool.error { border-color: #c0392b; }
+.assistant details.tool pre { white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; font-size: 12px; }
+.assistant textarea { width: 100%; box-sizing: border-box; }
+.assistant .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.assistant .examples button { font-size: 13px; }
+.assistant .msg-done { font-weight: 600; }

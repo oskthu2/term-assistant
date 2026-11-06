@@ -3,11 +3,12 @@
 AI-stödd terminologihantering mot **valfri FHIR-terminologitjänst** (Ineras, tx-nordics,
 tx.fhir.org eller en lokal HAPI-server). Lösningen består av tre **helt fristående
 komponenter**. De delar ingen kod, installeras och testas var för sig och pratar med
-varandra bara via FHIR: terminologitjänstens API och FHIR-paket.
+varandra bara via öppna gränssnitt: terminologitjänstens FHIR-API, FHIR-paket och
+MCP (administrationsverktygets AI-assistent startar MCP-servern som underprocess).
 
 | Komponent | Gör | Kommando |
 |---|---|---|
-| [**Inläsningstjänsten**](inlasning/README.md) | Administrationsverktyget. Läser in kodverk och urval från Excel, CSV eller PDF. Förvaltar kodverk, urval, mappningar (ConceptMap) och översättningar (CodeSystem-supplement) med redaktionell kedja och releaser, tar in utkast från MCP-servern (Bundle eller paket) och publicerar releaser som FHIR-paket eller till terminologitjänsten | `term-inlasning` |
+| [**Inläsningstjänsten**](inlasning/README.md) | Administrationsverktyget. Läser in kodverk och urval från Excel, CSV eller PDF. Förvaltar kodverk, urval, mappningar (ConceptMap) och översättningar (CodeSystem-supplement) med redaktionell kedja och releaser, tar in utkast från MCP-servern (Bundle eller paket), har en AI-assistent i projektet som använder MCP-serverns verktyg, och publicerar releaser som FHIR-paket eller till terminologitjänsten | `term-inlasning` |
 | [**MCP-servern**](mcp-server/README.md) | Terminologiverktyg för AI-assistenter framför valfri FHIR-terminologitjänst. Läser bara: urval, mappningar och översättningar blir *utkast* som hämtas som FHIR-Bundle eller FHIR-paket. Har ett webbgränssnitt och en terminalklient där Claude utför instruktioner på svenska | `term-mcp`, `term-mcp-webb`, `term-mcp-demo` |
 | [**Paketbyggaren**](paketbyggare/README.md) | Bygger versionerade terminologipaket från tx-nordics och inläsningstjänstens releaser, som schemalagt jobb, och grundladdar terminologitjänster | `term-paket` |
 
@@ -72,7 +73,9 @@ Designen beskrivs i [docs/arkitektur.md](docs/arkitektur.md).
    Därefter visar assistenten den svenska texten: "Vad heter søsken på svenska?".
 
    Mappningar och översättningar kan också skapas direkt i verktyget med **Ny mappning** och
-   **Ny översättning**. Då läggs en rad upp per käll- respektive kod.
+   **Ny översättning**. Då läggs en rad upp per käll- respektive kod. Fliken **AI-assistent** i
+   projektet låter Claude föreslå mål eller översättningar för de rader som saknar dem, med
+   MCP-serverns verktyg. Förslagen hamnar under **Förslag** och granskas där.
 
 7. **Egna kodverk från Excel.** Läs in `inlasning/examples/eget_kodverk.xlsx` och publicera releasen
    till **Paketkatalog**. Bygg sedan paketet och ladda om mock-tjänsten:

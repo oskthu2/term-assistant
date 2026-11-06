@@ -4,7 +4,7 @@ set -euo pipefail
 
 echo "== Installerar de tre komponenterna (var för sig)"
 python -m pip install --upgrade pip >/dev/null
-python -m pip install -e './inlasning[dev,ai,pdf]' -e './mcp-server[dev]' -e './paketbyggare[dev]'
+python -m pip install -e './inlasning[dev,ai,pdf,assistent]' -e './mcp-server[dev]' -e './paketbyggare[dev]'
 
 echo "== Skapar exempelfiler (inlasning/examples/*.xlsx, *.pdf)"
 python inlasning/examples/make_examples.py

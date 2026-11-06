@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}AI-assistent – {{ project.title }}{% endblock %}
+{% block content %}
+{% set active = 'assistant' %}
+{% include "_project_tabs.html" %}
+<p class="muted">Instruera Claude att arbeta med projektet. Assistenten slår upp, söker och validerar mot
+terminologitjänsten genom MCP-servern och lägger sina ändringar som <b>förslag</b> under
+<a href="/p/{{ project.id }}/proposals">Förslag</a>, där de granskas innan något ändras. Nya målkoder
+kontrolleras mot terminologitjänsten innan ett förslag sparas.</p>
+{% if not api_key %}<div class="errors">ANTHROPIC_API_KEY saknas – assistenten kan inte svara. Lägg nyckeln som
+  miljövariabel (Codespaces-hemlighet) och starta om verktyget.</div>{% endif %}
+<div class="panel assistant">
+  <div id="log" aria-live="polite">{% if followup %}<p class="muted small">Dialogen fortsätter – assistenten
+    minns tidigare instruktioner i projektet.</p>{% endif %}</div>
+  <form id="ask">
+    <textarea id="instruktion" rows="3" placeholder="T.ex. ”{{ examples[0] if examples else 'Föreslå förbättringar' }}” (Ctrl+Enter skickar)" aria-label="Instruktion"></textarea>
+    <div class="checks"><button type="submit" id="send">Skicka</button>
+      <span class="small muted" id="status"></span></div>
+  </form>
+  {% if examples %}<div class="examples">{% for ex in examples %}<button type="button" class="secondary small-button">{{ ex }}</button>{% endfor %}</div>{% endif %}
+</div>
+<form method="post" action="/p/{{ project.id }}/assistent/ny" class="inline"><button class="secondary" type="submit">Ny dialog</button></form>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const log = $("log"), tools = {};
+  let busy = false;
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  function pretty(t) { try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return t; } }
+  function short(v) { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > 70 ? s.slice(0, 70) + "…" : s; }
+  document.querySelectorAll(".examples button").forEach((b) => b.onclick = () => { $("instruktion").value = b.textContent; $("instruktion").focus(); });
+  function handle(ev) {
+    if (ev.type === "text") { const d = el("div", "msg assistant"); d.innerHTML = ev.html; log.append(d); }
+    else if (ev.type === "tool_use") {
+      const d = el("details", "tool"), s = el("summary");
+      s.append("→ ", el("b", null, ev.name), "(" + Object.entries(ev.input).map(([k, v]) => `${k}=${short(v)}`).join(", ") + ")");
+      d.append(s, el("pre", null, JSON.stringify(ev.input, null, 2))); tools[ev.id] = d; log.append(d);
+      $("status").textContent = `Anropar ${ev.name} …`;
+    } else if (ev.type === "tool_result") {
+      const d = tools[ev.id];
+      if (d) { d.append(el("pre", null, pretty(ev.text))); d.querySelector("summary").append(ev.is_error ? "  ✗ fel" : "  ✓"); if (ev.is_error) d.classList.add("error"); }
+      $("status").textContent = "Arbetar …";
+    } else if (ev.type === "done") {
+      if (ev.note) log.append(el("p", "msg-note", ev.note));
+      if (ev.created) { const p = el("p", "msg-done"); const a = el("a", null, `${ev.created} förslag att granska`);
+        a.href = "/p/{{ project.id }}/proposals"; p.append(a); log.append(p); }
+    } else if (ev.type === "error") { log.append(el("div", "errors", ev.text)); }
+  }
+  async function ask(text) {
+    if (busy) return; busy = true; $("send").disabled = true; $("status").textContent = "Arbetar …";
+    log.append(el("div", "msg user", text));
+    try {
+      const r = await fetch("/p/{{ project.id }}/assistent/fraga", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                                  body: JSON.stringify({instruktion: text})});
+      if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error; } catch {} throw new Error(m); }
+      const reader = r.body.getReader(), decoder = new TextDecoder(); let buffer = "";
+      for (;;) {
+        const {value, done} = await reader.read(); if (done) break;
+        buffer += decoder.decode(value, {stream: true}); let i;
+        while ((i = buffer.indexOf("\n\n")) >= 0) {
+          const line = buffer.slice(0, i); buffer = buffer.slice(i + 2);
+          if (line.startsWith("data: ")) handle(JSON.parse(line.slice(6)));
+        }
+      }
+    } catch (e) { log.append(el("div", "errors", e.message)); }
+    busy = false; $("send").disabled = false; $("status").textContent = "";
+  }
+  $("ask").onsubmit = (e) => { e.preventDefault(); const t = $("instruktion").value.trim(); if (t) { $("instruktion").value = ""; ask(t); } };
+  $("instruktion").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("ask").requestSubmit(); };
+})();
+</script>
+{% endblock %}

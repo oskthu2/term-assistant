@@ -902,7 +902,7 @@ def approve_release(ws: Workspace, project: Project, rc_version: str, author: st
         raise OpError("Bara releasekandidater kan godkännas.")
     if settings.editorial.four_eyes_release:
         if author in ("", "okänd"):
-            raise OpError("Fyra ögon kräver inloggning: godkännarens namn saknas (X-Remote-User).")
+            raise OpError("Fyra ögon kräver inloggning: godkännarens namn saknas.")
         if author == rc.author:
             raise OpError(f"Fyra ögon: kandidaten skapades av {rc.author} och måste godkännas av någon annan.")
     base = rc.version.split("-rc.")[0]

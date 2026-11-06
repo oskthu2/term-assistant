@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = ["anthropic>=2.1"]
+assistent = ["anthropic[mcp]>=2.1", "markdown>=3.5"]   # AI-assistenten i projektet (MCP-servern installeras separat)
 pdf = ["pdfplumber>=0.11"]
 dev = ["pytest>=8", "reportlab>=4"]
 

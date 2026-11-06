@@ -99,7 +99,7 @@ def review(ws: Workspace, project: Project, data: dict[str, SheetData], proposal
     if proposal.status != "öppen":
         raise ops.OpError(f"Förslaget är redan {proposal.status}.")
     if reviewer in ("", "okänd"):
-        raise ops.OpError("Granskning kräver inloggning: granskarens namn saknas (X-Remote-User).")
+        raise ops.OpError("Granskning kräver inloggning: granskarens namn saknas.")
     if proposal.origin == "manuell" and reviewer == proposal.author:
         raise ops.OpError("Ett förslag kan inte granskas av den som skrev det.")
 

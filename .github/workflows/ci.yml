@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         komponent:
-          - { katalog: inlasning, extra: "dev,pdf,ai" }
+          - { katalog: inlasning, extra: "dev,pdf,ai,assistent" }
           - { katalog: mcp-server, extra: "dev" }
           - { katalog: paketbyggare, extra: "dev" }
     defaults:

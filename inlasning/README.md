@@ -199,6 +199,31 @@ kodsystemets egen text, som är låsta, samt översättningen och en kommentar.
 - **Hämta nya koder:** lägger till rader för koder som tillkommit i kodsystemet.
 - **Status:** sidan visar hur många koder som är översatta.
 
+### AI-assistenten i projektet
+
+Fliken **AI-assistent** i ett projekt (kräver rollen redaktör) låter dig instruera Claude att
+arbeta med projektet, till exempel:
+
+- "Föreslå mål för de rader som saknar målkod." (mappning)
+- "Granska relationerna och föreslå kommentarer där målet är smalare eller närliggande."
+- "Översätt de koder som saknar översättning." (översättning)
+- "Föreslå definitioner där de saknas." (kodverk)
+
+Assistenten slår upp, söker (även med ECL i SNOMED CT) och validerar mot terminologitjänsten
+genom MCP-servern. Varje steg visas medan det sker. Ändringarna läggs som **förslag** under
+*Förslag* och granskas där innan något ändras. Nya målkoder kontrolleras mot
+terminologitjänsten innan ett förslag sparas, och mappningsreglerna gäller som vid manuell
+redigering.
+
+```bash
+pip install -e '.[assistent]'               # anthropic[mcp] och markdown
+pip install -e ../mcp-server                # MCP-servern (term-mcp), eller sätt TERM_MCP_COMMAND
+export ANTHROPIC_API_KEY=…                  # som miljövariabel eller Codespaces-hemlighet
+```
+
+MCP-servern startas med `TX_BASE_URL` från administrationsverktyget, så att båda arbetar mot
+samma terminologitjänst. `TX_SNOMED_EDITION` och eventuella OAuth-variabler följer med.
+
 ### Förslag och utkast
 
 **Förslag och utkast** är startpunkten för urval, mappningar och översättningar som tagits fram

@@ -2,9 +2,10 @@
 
 Starta:  term-inlasning admin --workspace ./arbetsyta
 
-Vyn har ingen egen inloggning. Kör den bakom en proxy som sköter inloggning
-och skickar användarnamnet i ``X-Remote-User``. Namnet hamnar i loggen och
-används för fyra ögon (granskning och godkännande av releaser).
+Inloggning och roller: demoläge (användarval), OpenID Connect mot organisationens IdP eller
+en inloggningsproxy – se ``auth.py``. Användarnamnet hamnar i loggen och används för fyra
+ögon (granskning och godkännande av releaser). AI-assistenten i projektet finns i
+``assistant.py``.
 
 Arbetsytans inställningar (namnrymder, informationsklasser, publiceringsmål,
 redaktionella regler) ligger i ``<arbetsyta>/settings.json``; se
@@ -13,6 +14,7 @@ redaktionella regler) ligger i ``<arbetsyta>/settings.json``; se
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import re
@@ -26,7 +28,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -38,7 +40,7 @@ from ..importer import conceptmap, lifecycle, metadata, supplement
 from ..importer.replacements import RELATIONS
 from ..importer.suggest import MappingProposal
 from ..importer.workbook import read_workbook
-from . import auth, editorial, ops
+from . import assistant, auth, editorial, ops
 from .settings import Settings
 from .store import Workspace
 
@@ -94,8 +96,9 @@ class SecurityMiddleware:
 
 def create_app(workspace: str | Path, registry_path: str | Path | None = None,
                base_url: str = "http://example.org/fhir", tx_client_factory=None, ai_client_factory=None,
-               oidc_transport=None) -> Starlette:
-    """``tx_client_factory``/``ai_client_factory``/``oidc_transport`` gör det möjligt att byta klienter i test."""
+               oidc_transport=None, assistant_client_factory=None, mcp_command: list[str] | None = None) -> Starlette:
+    """``tx_client_factory``/``ai_client_factory``/``oidc_transport``/``assistant_client_factory`` gör det möjligt
+    att byta klienter i test; ``mcp_command`` startar MCP-servern (annars TERM_MCP_COMMAND eller term-mcp)."""
     ws = Workspace(workspace)
     auth_cfg = Settings.load(ws.root).auth  # inloggningsläget gäller tills verktyget startas om
     auth_warnings = auth.check_config(auth_cfg)
@@ -639,6 +642,81 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             msg = "; ".join(exc.messages) if isinstance(exc, ops.OpError) else f"{type(exc).__name__}: {exc}"
             return redirect(sheet_url(project, sheet), f"AI-granskningen misslyckades: {msg}")
         return redirect(f"/p/{project.id}/proposals", f"AI-granskningen gav {len(made)} förslag att granska.")
+
+    # -- AI-assistenten i projektet ---------------------------------------------------------------
+
+    conversations = assistant.Conversations()
+
+    async def assistant_page(request: Request):
+        project, data = load(request.path_params["pid"])
+        if project is None:
+            return not_found(request, "Projektet")
+        history = conversations.get(project.id, author(request))
+        return render(request, "assistant.html", project=project, data=data,
+                      examples=assistant.EXAMPLES.get(project.template.kind, []),
+                      followup=bool(history), api_key=bool(os.environ.get("ANTHROPIC_API_KEY"))
+                      or assistant_client_factory is not None)
+
+    async def assistant_ask(request: Request):
+        project, data = load(request.path_params["pid"])
+        if project is None:
+            return JSONResponse({"error": "Projektet finns inte."}, status_code=404)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        instruction = str(body.get("instruktion") or "").strip()
+        if not instruction:
+            return JSONResponse({"error": "Skriv en instruktion."}, status_code=400)
+        if len(instruction) > 4000:
+            return JSONResponse({"error": "Instruktionen är för lång."}, status_code=400)
+        user = author(request)
+        if project.id in conversations.busy:
+            return JSONResponse({"error": "Assistenten arbetar redan i projektet – vänta tills den är klar."},
+                                status_code=409)
+        conversations.busy.add(project.id)
+        events: asyncio.Queue = asyncio.Queue()
+
+        def on_event(kind: str, data_: dict) -> None:
+            if kind in ("text", "done") and data_.get("text" if kind == "text" else "answer"):
+                data_ = data_ | {"html": assistant.render_markdown(data_["text" if kind == "text" else "answer"])}
+            events.put_nowait({"type": kind, **data_})
+
+        async def work():
+            try:
+                if assistant_client_factory is not None:
+                    client = assistant_client_factory()
+                else:
+                    from anthropic import AsyncAnthropic
+                    client = AsyncAnthropic()
+                job = assistant.Run(ws, project, data, user, instruction, tx_client)
+                messages = await assistant.execute(job, conversations.get(project.id, user), client,
+                                                   assistant.mcp_command(mcp_command), on_event)
+                conversations.set(project.id, user, messages)
+            except ImportError:
+                events.put_nowait({"type": "error", "text": "AI-assistenten kräver paketen anthropic och mcp: "
+                                   "pip install 'term-inlasning[assistent]'."})
+            except Exception as exc:  # noqa: BLE001 – nycklar, nätverk, MCP-servern …
+                text = "; ".join(exc.messages) if isinstance(exc, ops.OpError) else f"{type(exc).__name__}: {exc}"
+                if "api_key" in text.lower() or "authentication" in text.lower():
+                    text = f"Claude kunde inte anropas – ANTHROPIC_API_KEY saknas eller är ogiltig. ({text})"
+                events.put_nowait({"type": "error", "text": text})
+            finally:
+                conversations.busy.discard(project.id)
+                events.put_nowait(None)
+
+        task = asyncio.create_task(work())
+
+        async def stream():
+            while (event := await events.get()) is not None:
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+            await task
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    async def assistant_reset(request: Request):
+        conversations.reset(request.path_params["pid"], author(request))
+        return redirect(f"/p/{request.path_params['pid']}/assistent", "Ny dialog.")
 
     # -- kolumner (mallen) ------------------------------------------------------------------------
 
@@ -1188,6 +1266,9 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         Route("/p/{pid}/log", need("läsare", log_page)),
         Route("/p/{pid}/s/{sheet}", need("läsare", sheet_page)),
         Route("/p/{pid}/s/{sheet}/ai", need("redaktör", ai_review), methods=["POST"]),
+        Route("/p/{pid}/assistent", need("redaktör", assistant_page), methods=["GET"]),
+        Route("/p/{pid}/assistent/fraga", need("redaktör", assistant_ask), methods=["POST"]),
+        Route("/p/{pid}/assistent/ny", need("redaktör", assistant_reset), methods=["POST"]),
         Route("/p/{pid}/s/{sheet}/new", need("läsare", concept_form), methods=["GET"]),
         Route("/p/{pid}/s/{sheet}/new", need("redaktör", concept_save), methods=["POST"]),
         Route("/p/{pid}/s/{sheet}/c/{code}", need("läsare", concept_form), methods=["GET"]),

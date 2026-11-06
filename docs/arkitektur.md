@@ -149,12 +149,33 @@ lista utkast som någon annan har lagt på terminologitjänsten med förslagstag
   markdown renderas på servern med HTML i texten neutraliserad. Utkasten listas bredvid samtalet
   och hämtas som FHIR-paket, FHIR-Bundle eller enskilda resurser.
 
-**Administrationsverktyget direkt mot MCP-servern?** Det tillför lite. Administrationsverktyget
-pratar redan FHIR med terminologitjänsten för sökning, kontroll och expansion, och MCP är ett
-gränssnitt för språkmodeller. Att gå via MCP vore en omväg utan ny förmåga och skulle koppla
-ihop komponenterna. Värdet uppstår först om administrationsverktyget får en AI-assistent i
-projektet, till exempel "föreslå mål för de omappade raderna". Då kan assistenten använda
-MCP-serverns verktyg och spärrar i stället för att bygga egna.
+### AI-assistenten i projektet (`admin/assistant.py`)
+
+Administrationsverktyget pratar själv FHIR med terminologitjänsten för sökning, kontroll och
+expansion. MCP används bara där en språkmodell arbetar: i **AI-assistenten** i ett projekt. Där
+får redaktören instruera Claude, till exempel "föreslå mål för de rader som saknar målkod" eller
+"översätt de koder som saknar översättning". Besluten:
+
+* **MCP-servern som verktygslåda.** Assistenten startar MCP-servern som underprocess
+  (`TERM_MCP_COMMAND`, standard `term-mcp`), pekad mot samma terminologitjänst, och ger Claude
+  dess läsande verktyg: uppslag, sökning, ECL, validering och översättning. Ingen kod delas mellan
+  komponenterna, bara protokollet. Utkastverktygen ges inte till assistenten, eftersom ändringarna
+  här går in i projektet.
+* **Två egna verktyg.** `project_rows` läser projektets rader (alla eller ofullständiga) och
+  `propose_changes` lägger ändringsförslag i den redaktionella kedjan.
+* **Inget ändras direkt.** Varje ändring blir ett AI-förslag (`origin = ai`) med proveniens:
+  modell, tidpunkt, instruktionen och dess kontrollsumma. En människa granskar den under
+  *Förslag*, och ett godkänt förslag förs in bara om raden inte har ändrats under tiden.
+* **Kontroll oberoende av modellen.** Innan ett förslag sparas kontrollerar
+  administrationsverktyget att kolumnen är redigerbar och att raden finns. Nya målkoder
+  valideras mot terminologitjänsten (`$validate-code`) och måltexten fylls i därifrån. Raden
+  måste också uppfylla mappningsreglerna: relation, kommentar vid smalare och närliggande, ingen
+  målkod vid ingen motsvarighet. Ett förslag som redan är öppet skapas inte igen. Det som stoppas
+  rapporteras tillbaka till modellen med orsak.
+* **Roll och dialog.** Assistenten kräver rollen redaktör. Dialogen sparas i minnet per projekt
+  och användare, så att följdfrågor fungerar, och bara en körning i taget tillåts per projekt.
+  Stegen strömmas till sidan med Server-Sent Events. Claudes markdown renderas utan rå HTML
+  och utan `javascript:`-länkar.
 
 ## Paketbyggaren (`paketbyggare/`)
 
