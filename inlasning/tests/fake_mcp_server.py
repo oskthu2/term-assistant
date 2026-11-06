@@ -9,6 +9,13 @@ mcp = MCPServer("fake-term-mcp")
 
 
 @mcp.tool()
+async def server_info() -> dict:
+    """Terminologitjänsten och SNOMED CT-editionen."""
+    return {"base_url": "https://tx.example.org/fhir", "access": "endast läsning",
+            "snomed_edition": "http://snomed.info/sct/45991000052106", "software": {"name": "Fake", "version": "1.0"}}
+
+
+@mcp.tool()
 async def search_concepts(system: str, text: str, count: int = 20) -> dict:
     """Fritextsök begrepp."""
     return {"contains": [{"system": V3, "code": c, "display": d} for c, d in CODES.items()

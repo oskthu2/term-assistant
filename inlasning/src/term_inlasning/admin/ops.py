@@ -37,7 +37,7 @@ from ..importer.transform import _TRUE, coerce
 from ..importer.validate import validate_resources
 from ..importer.workbook import Sheet
 from .settings import Namespace, Settings, Target
-from .store import Flag, Project, Question, Release, SheetData, Workspace
+from .store import Flag, now, Project, Question, Release, SheetData, Workspace
 
 ROLE_LABELS = {
     ColumnRole.CODE: "Kod",
@@ -921,46 +921,158 @@ def approve_release(ws: Workspace, project: Project, rc_version: str, author: st
     return rel
 
 
+PARTICIPANT = "http://terminology.hl7.org/CodeSystem/provenance-participant-type"
+DATA_OPERATION = "http://terminology.hl7.org/CodeSystem/v3-DataOperation"
+DOCUMENT_COMPLETION = "http://terminology.hl7.org/CodeSystem/v3-DocumentCompletion"
+USER_SYSTEM = "urn:term-assistant:anvandare"                  # användarnamn i administrationsverktyget
+SHA256 = "urn:term-assistant:sha256"
+REQUEST_ID = "urn:term-assistant:claude-request-id"
+URI = "urn:ietf:rfc:3986"
+_OPERATION = {"create": "CREATE", "update": "UPDATE", "retire": "UPDATE", "replace-code": "UPDATE"}
+_ACTION_TEXT = {"create": "nytt begrepp", "update": "ändring", "retire": "avveckling", "replace-code": "kodbyte"}
+
+
+def _agent(role: str, who: dict) -> dict:
+    return {"type": {"coding": [{"system": PARTICIPANT, "code": role}]}, "who": who}
+
+
+def _person(username: str | None) -> dict:
+    name = username or "okänd"
+    return {"identifier": {"system": USER_SYSTEM, "value": name}, "display": name}
+
+
+def _device(rid: str, name: str, kind: str, manufacturer: str | None = None) -> dict:
+    device = {"resourceType": "Device", "id": rid, "deviceName": [{"name": name, "type": "model-name"}],
+              "type": {"text": kind}}
+    if manufacturer:
+        device["manufacturer"] = manufacturer
+    return device
+
+
+def _narrative(resource: dict) -> dict:
+    """Genererad text (dom-6): aktivitet, aktörer och underlag i klartext."""
+    import html
+    parts = [resource["activity"].get("text", "")]
+    parts += [f"{a['type']['coding'][0]['code']}: {a['who'].get('display', '')}" for a in resource.get("agent", [])]
+    parts += [e["what"].get("display", "") for e in resource.get("entity", [])]
+    items = "".join(f"<li>{html.escape(p)}</li>" for p in parts if p)
+    return {"status": "generated", "div": f'<div xmlns="http://www.w3.org/1999/xhtml"><ul>{items}</ul></div>'}
+
+
+def _entity(role: str, display: str, identifier: tuple[str, str] | None = None) -> dict:
+    what: dict = {"display": display}
+    if identifier:
+        what["identifier"] = {"system": identifier[0], "value": identifier[1]}
+    return {"role": role, "what": what}
+
+
+def _proposal_provenance(p, targets: list[dict]) -> dict:
+    """Ett godkänt förslag i den redaktionella kedjan. AI-förslag har modellen som författare (Device),
+    personen som startade som registrerare och underlaget som entity."""
+    info = p.provenance or {}
+    contained, agents, entities = [], [], []
+    if p.origin == "ai":
+        model = info.get("model") or "okänd modell"
+        contained.append(_device("ai", model, "AI-modell (språkmodell)",
+                                 "Anthropic" if model.startswith("claude") else None))
+        agents += [_agent("author", {"reference": "#ai", "display": f"AI: {model}"}), _agent("enterer", _person(p.author))]
+    else:
+        agents.append(_agent("author", _person(p.author)))
+    agents.append(_agent("verifier", _person(p.reviewer)))
+    if info.get("instruction"):
+        entities.append(_entity("source", f"Instruktion: {info['instruction']}",
+                                (SHA256, info.get("instruction_sha256") or "")))
+    if info.get("input_sha256"):
+        entities.append(_entity("source", f"Underlag: bladet {p.sheet}", (SHA256, info["input_sha256"])))
+    if info.get("terminology_server"):
+        entities.append(_entity("source", "Terminologitjänst", (URI, info["terminology_server"])))
+    mcp = info.get("mcp_server") or {}
+    used_snomed = any(v.get("system") == "http://snomed.info/sct" for v in info.get("verified") or []) \
+        or "snomed_ecl" in (info.get("tools") or {})
+    if used_snomed and str(mcp.get("snomed_edition") or "").startswith("http"):
+        entities.append(_entity("source", "SNOMED CT-edition", (URI, mcp["snomed_edition"])))
+    for v in info.get("verified") or []:
+        entities.append(_entity("source", f"{v.get('system')}|{v.get('version') or '-'} kod {v.get('code')}"
+                                          + (f" ({v['display']})" if v.get("display") else ""), (URI, v.get("system"))))
+    if info.get("tools"):
+        entities.append(_entity("source", "Verktygsanrop via MCP: " + ", ".join(
+            f"{k} ×{n}" if n > 1 else k for k, n in info["tools"].items())))
+    if info.get("request_id"):
+        entities.append(_entity("source", "Anrop till Claude", (REQUEST_ID, info["request_id"])))
+    kind = {"assistent": " (AI-assistenten)", None: ""}.get(info.get("kind"), " (AI-granskning)") \
+        if p.origin == "ai" else ""
+    return {
+        "resourceType": "Provenance", "id": f"forslag-{p.id}", "contained": contained or None,
+        "target": targets[:1] or [{"display": "-"}],
+        "occurredDateTime": p.created, "recorded": p.reviewed,
+        "activity": {"coding": [{"system": DATA_OPERATION, "code": _OPERATION.get(p.action, "UPDATE")}],
+                     "text": f"{_ACTION_TEXT.get(p.action, p.action)} {p.sheet}/{p.code or 'nytt'}: "
+                             f"{', '.join(p.changes) or 'markering'}{kind}"},
+        "agent": agents, "reason": [{"text": p.rationale}] if p.rationale else None, "entity": entities or None,
+    }
+
+
+def _origin_provenance(origin: dict, targets: list[dict], project_id: str) -> dict:
+    """Projektet togs in från ett utkast (t.ex. från terminologiassistenten): grundinnehållets ursprung."""
+    canonical = f"{origin.get('url')}|{origin.get('version') or '-'}"
+    if origin.get("ai"):
+        tool = origin.get("publisher") or "okänt verktyg"
+        author = _agent("author", {"reference": "#utkast", "display": f"AI-stött utkast: {tool}"})
+        contained = [_device("utkast", "term-mcp", "AI-stött utkastverktyg (MCP-server)")]
+    else:
+        author = _agent("author", {"display": origin.get("publisher") or "okänd utgivare"})
+        contained = None
+    entities = [_entity("source", f"Utkast {origin.get('resourceType')}/{origin.get('id')} {canonical}",
+                        (URI, origin.get("url") or "")),
+                _entity("source", f"Utkastets innehåll (SHA-256), från {origin.get('source') or 'okänd källa'}",
+                        (SHA256, origin.get("sha256") or ""))]
+    return {
+        "resourceType": "Provenance", "id": f"intag-{project_id}"[:64], "contained": contained,
+        "target": targets or [{"display": "-"}], "occurredDateTime": origin.get("date") or origin.get("taken_in_at"),
+        "recorded": origin.get("taken_in_at"),
+        "activity": {"coding": [{"system": DATA_OPERATION, "code": "CREATE"}],
+                     "text": "Projektet togs in från ett utkast"
+                             + (" som tagits fram med AI-stöd" if origin.get("ai") else "")},
+        "agent": [author, _agent("enterer", _person(origin.get("taken_in_by")))],
+        "reason": [{"text": origin["description"]}] if origin.get("description") else None,
+        "entity": entities,
+    }
+
+
 def provenance_bundle(ws: Workspace, project: Project, rel: Release) -> dict:
-    """Den redaktionella kedjan som FHIR Provenance: förslag (manuella och AI), granskning, release."""
+    """Den redaktionella kedjan som FHIR Provenance: ursprung (intag av utkast) i första releasen, godkända
+    förslag (manuella och AI) sedan förra releasen, och releasen själv."""
     previous = next((r for r in ws.releases(project.id) if r.status == "release" and r.created < rel.created
                      and r.version != rel.version), None)
     since = previous.created if previous else ""
     targets = [{"reference": f"{r['resourceType']}/{r.get('id')}", "display": f"{r['url']}|{r['version']}"}
                for r in rel.resources]
     entries = []
+    if project.origin and previous is None:
+        entries.append({"resource": _origin_provenance(project.origin, targets, project.id)})
     for p in ws.proposals(project.id):
         if p.status != "godkänd" or (p.reviewed or "") <= since or (p.reviewed or "") > rel.created:
             continue
-        agents = [{"type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type",
-                                        "code": "author"}]},
-                   "who": {"display": (f"AI: {p.provenance.get('model')}" if p.origin == "ai" and p.provenance
-                                       else p.author)}},
-                  {"type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type",
-                                        "code": "verifier"}]}, "who": {"display": p.reviewer}}]
-        if p.origin == "ai":
-            agents.append({"type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/"
-                                                          "provenance-participant-type", "code": "enterer"}]},
-                           "who": {"display": p.author}})
-        entries.append({"resource": {
-            "resourceType": "Provenance", "id": f"forslag-{p.id}", "target": targets[:1] or [{"display": "-"}],
-            "recorded": p.reviewed, "agent": agents,
-            "activity": {"text": f"{p.action} {p.sheet}/{p.code or 'nytt'}: {', '.join(p.changes)}"},
-            "reason": [{"text": p.rationale}] if p.rationale else None,
-            "entity": [{"role": "source", "what": {"display": json.dumps(p.provenance, ensure_ascii=False)}}]
-            if p.provenance else None,
-        }})
+        entries.append({"resource": _proposal_provenance(p, targets)})
+    author = ws_release_author(ws, project, rel)
     entries.append({"resource": {
         "resourceType": "Provenance", "id": f"release-{rel.version}", "target": targets, "recorded": rel.created,
-        "agent": [{"type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type",
-                                        "code": "author"}]}, "who": {"display": ws_release_author(ws, project, rel)}},
-                  {"type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/provenance-participant-type",
-                                        "code": "attester"}]}, "who": {"display": rel.author}}],
-        "activity": {"text": f"Release {rel.version} (kandidat {rel.based_on})"},
+        "activity": {"coding": [{"system": DOCUMENT_COMPLETION, "code": "LA", "display": "legally authenticated"}],
+                     "text": f"Release {rel.version} godkänd (kandidat {rel.based_on})"},
+        "agent": [_agent("author", _person(author)), _agent("attester", _person(rel.author))],
+        "reason": [{"text": rel.notes}] if rel.notes else None,
     }})
     for e in entries:
         e["resource"] = {k: v for k, v in e["resource"].items() if v is not None}
+        e["resource"] = {"resourceType": "Provenance", "id": e["resource"]["id"], "text": _narrative(e["resource"])} \
+            | e["resource"]
+        e["fullUrl"] = f"urn:uuid:{_uuid_for(e['resource']['id'] + rel.version + project.id)}"
     return {"resourceType": "Bundle", "type": "collection", "entry": entries}
+
+
+def _uuid_for(text: str) -> str:
+    import uuid
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:term-assistant:{text}"))
 
 
 def ws_release_author(ws: Workspace, project: Project, rel: Release) -> str:
@@ -1281,15 +1393,52 @@ def can_take_in(resource: dict) -> str | None:
     return None
 
 
+def draft_origin(resource: dict, source: str | None, author: str) -> dict:
+    """Ursprunget för ett projekt som tagits in från ett utkast: blir Provenance i den första releasen."""
+    import hashlib
+    tags = resource.get("meta", {}).get("tag", [])
+    tagged = any(t.get("system") == "urn:term-assistant:arbetsflode" and t.get("code") == "forslag" for t in tags)
+    publisher = resource.get("publisher") or ""
+    return {"kind": "utkast", "ai": tagged or "AI" in publisher, "resourceType": resource["resourceType"],
+            "id": resource.get("id"), "url": resource.get("url"), "version": resource.get("version"),
+            "publisher": publisher or None, "date": resource.get("date"), "description": resource.get("description"),
+            "source": source,
+            "sha256": hashlib.sha256(json.dumps(resource, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+            "taken_in_by": author, "taken_in_at": now()}
+
+
+def _draft_description(description: str | None, title: str | None) -> str | None:
+    """Utkastets "Förslag: <titel>. Motivering: …" blir motiveringen; märkningen hör till proveniensen."""
+    if not description or not description.startswith("Förslag: "):
+        return description
+    text = description[len("Förslag: "):]
+    if title and text.startswith(title):
+        text = text[len(title):].lstrip(".").strip()
+    text = re.sub(r"^Motivering:\s*", "", text).strip()
+    return text or None
+
+
 def project_from_resource(ws: Workspace, resource: dict, title: str, author: str,
                           namespace: Namespace | None = None, classification: str | None = None,
-                          base_codes: list[dict] | None = None) -> Project:
-    """Ta in ett förslag (eller annan resurs) från terminologitjänsten som projekt att granska och förvalta."""
+                          base_codes: list[dict] | None = None, source: str | None = None) -> Project:
+    """Ta in ett utkast (fil eller terminologitjänst) som projekt att granska och förvalta. Ursprunget sparas
+    och blir Provenance i projektets första release."""
+    project = _project_from_resource(ws, resource, title, author, namespace, classification, base_codes)
+    project.origin = draft_origin(resource, source, author)
+    ws.save(project, author=author, action="Ursprung registrerat",
+            detail={"källa": source, "sha256": project.origin["sha256"][:16]})
+    return project
+
+
+def _project_from_resource(ws: Workspace, resource: dict, title: str, author: str,
+                           namespace: Namespace | None = None, classification: str | None = None,
+                           base_codes: list[dict] | None = None) -> Project:
     from ..importer.external import resolve_system_name
     from ..importer.mapping import CodeSystemMeta, SourceInfo
     meta = CodeSystemMeta(url=resource["url"], name=resource.get("name") or resource["id"],
                           title=resource.get("title"), version=re.sub(r"[^0-9.]", "", resource.get("version") or "")
-                          or "0.1.0", description=resource.get("description"), purpose=resource.get("purpose"),
+                          or "0.1.0", description=_draft_description(resource.get("description"), resource.get("title")),
+                          purpose=resource.get("purpose"),
                           sources={"url": "förslag på terminologitjänsten"})
     if not re.fullmatch(r"\d+\.\d+\.\d+", meta.version):
         meta.version = "0.1.0"

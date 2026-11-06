@@ -164,7 +164,9 @@ får redaktören instruera Claude, till exempel "föreslå mål för de rader so
 * **Två egna verktyg.** `project_rows` läser projektets rader (alla eller ofullständiga) och
   `propose_changes` lägger ändringsförslag i den redaktionella kedjan.
 * **Inget ändras direkt.** Varje ändring blir ett AI-förslag (`origin = ai`) med proveniens:
-  modell, tidpunkt, instruktionen och dess kontrollsumma. En människa granskar den under
+  modell, tidpunkt, instruktionen och dess kontrollsumma, terminologitjänsten och MCP-serverns
+  uppgifter (`server_info`: SNOMED CT-edition, programvara), de verktyg som anropades och den
+  kodsystemversion varje ny målkod kontrollerades mot. En människa granskar den under
   *Förslag*, och ett godkänt förslag förs in bara om raden inte har ändrats under tiden.
 * **Kontroll oberoende av modellen.** Innan ett förslag sparas kontrollerar
   administrationsverktyget att kolumnen är redigerbar och att raden finns. Nya målkoder
@@ -687,8 +689,21 @@ förslag (manuellt eller AI) → granskning (annan person) → införande → re
   från. Annars blir det *inaktuellt*.
 * Öppna förslag spärrar releasekandidat (inställbart). Godkännaren av en
   release får inte vara den som skapade kandidaten.
-* Godkända förslag och releasen blir FHIR Provenance i paketet. Agenterna är
-  författare (eller "AI: <modell>"), granskare och godkännare.
+* Den redaktionella kedjan blir FHIR Provenance i paketet (`other/provenance.json`), en
+  Bundle som validerar utan fel mot FHIR R4:
+
+  | Provenance | Aktivitet | Agenter | Underlag (`entity`) |
+  |---|---|---|---|
+  | `intag-…`, bara i första releasen för ett projekt som tagits in från ett utkast | `v3-DataOperation#CREATE` | författare: utkastverktyget (Device, om utkastet är AI-stött) eller utgivaren; registrerare: den som tog in det | utkastets canonical URL och version, SHA-256 av utkastet, varifrån det kom (fil eller terminologitjänst) |
+  | `forslag-…`, ett per godkänt förslag sedan förra releasen | `v3-DataOperation#CREATE`/`UPDATE` | författare: personen, eller modellen som Device med registreraren (den som startade) som egen agent; granskare | AI-assistenten: instruktionen (med SHA-256), terminologitjänsten, SNOMED CT-edition när SNOMED användes, kodsystemversionen varje målkod kontrollerades mot och verktygsanropen. AI-granskningen: underlagets SHA-256 och API-anropets id |
+  | `release-…` | `v3-DocumentCompletion#LA` | författare: den som skapade kandidaten; attesterare: den som godkände | – |
+
+  Personer anges med identifierare (`urn:term-assistant:anvandare`), modellen som en
+  inbäddad Device. Varje resurs har genererad narrativ text. Motiveringen ligger i `reason`
+  som text, eftersom värdemängden där (PurposeOfUse) gäller ändamål och inte redaktionella
+  motiveringar.
+* Ett utkasts märkning ("Förslag: … Motivering: …") följer inte med in i den släppta
+  beskrivningen. Den finns kvar i projektets ursprung (`project.origin`) och i Provenance.
 
 ## Nästa steg
 

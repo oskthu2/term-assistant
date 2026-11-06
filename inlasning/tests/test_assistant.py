@@ -67,7 +67,8 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("TERM_DEV_USERS", "anna,bertil")
     root = tmp_path / "ws"
     root.mkdir()
-    Settings(namespaces=[Namespace(key="ex", label="Exempel", base_url="http://example.org/fhir")],
+    Settings(namespaces=[Namespace(key="ex", label="Exempel", base_url="http://example.org/fhir",
+                                   publisher="Exempelorganisationen")],
              editorial=Editorial(review_manual_edits=False)).save(root)
     claude = FakeClaude()
     client = TestClient(create_app(root, tx_client_factory=FakeTx, assistant_client_factory=claude,
@@ -111,7 +112,12 @@ def test_assistant_proposes_checked_changes_for_review(setup):
     ws = Workspace(root)
     [proposal] = ws.proposals(pid)
     assert proposal.origin == "ai" and proposal.author == "anna" and proposal.changes == {"Relation": "likvärdig", "Målkod": "M", "Måltext": "Married"}
-    assert proposal.provenance["instruction"] == "Föreslå mål för omappade rader"
+    prov = proposal.provenance
+    assert prov["instruction"] == "Föreslå mål för omappade rader" and prov["kind"] == "assistent"
+    assert prov["mcp_server"] == {"base_url": "https://tx.example.org/fhir", "software": "Fake 1.0",
+                                  "snomed_edition": "http://snomed.info/sct/45991000052106"}
+    assert prov["tools"] == {"project_rows": 1, "search_concepts": 1, "propose_changes": 1}
+    assert prov["verified"] == [{"system": V3, "code": "M", "version": None, "display": "Married"}]
     assert next(r for r in ws.data(pid)["Mappningar"].rows if r["Nr"] == "M1").get("Målkod") is None
     r = client.post(f"/p/{pid}/proposals/{proposal.id}/accept")
     assert "godkänd" in _msg(r.text)
@@ -151,3 +157,37 @@ def test_markdown_is_safe():
     html = assistant.render_markdown("**a** <script>x</script> [l](javascript:alert(1)) `<< 1`")
     assert "<strong>a</strong>" in html and "<script>" not in html and "javascript" not in html
     assert "<code>&lt;&lt; 1</code>" in html
+
+
+def test_assistant_proposal_becomes_structured_provenance(setup):
+    from term_inlasning.admin import ops
+    client, _, root, pid = setup
+    events(client.post(f"/p/{pid}/assistent/fraga", json={"instruktion": "Föreslå mål för omappade rader"}))
+    [proposal] = Workspace(root).proposals(pid)
+    client.cookies.set("dev_user", "bertil")
+    client.post(f"/p/{pid}/proposals/{proposal.id}/accept")
+    client.cookies.set("dev_user", "anna")
+    client.post(f"/p/{pid}/releases", data={"version": "1.0.0", "notes": "Första"})
+    client.cookies.set("dev_user", "bertil")
+    client.post(f"/p/{pid}/releases/1.0.0-rc.1/approve")
+    ws = Workspace(root)
+    bundle = ops.provenance_bundle(ws, ws.get(pid), ws.release(pid, "1.0.0"))
+    prov, release = (e["resource"] for e in bundle["entry"])
+    assert prov["contained"][0] == {"resourceType": "Device", "id": "ai", "manufacturer": "Anthropic",
+                                    "deviceName": [{"name": "claude-opus-5-5", "type": "model-name"}],
+                                    "type": {"text": "AI-modell (språkmodell)"}}
+    roles = {a["type"]["coding"][0]["code"]: a["who"] for a in prov["agent"]}
+    assert roles["author"]["reference"] == "#ai"
+    assert roles["enterer"]["identifier"] == {"system": "urn:term-assistant:anvandare", "value": "anna"}
+    assert roles["verifier"]["identifier"]["value"] == "bertil"
+    assert prov["activity"]["coding"][0]["code"] == "UPDATE" and "AI-assistenten" in prov["activity"]["text"]
+    shown = [e["what"]["display"] for e in prov["entity"]]
+    assert "Instruktion: Föreslå mål för omappade rader" in shown
+    assert any(d.startswith(f"{V3}|- kod M") for d in shown)
+    assert "Verktygsanrop via MCP: project_rows, search_concepts, propose_changes" in shown
+    assert not any("SNOMED" in d for d in shown)                     # SNOMED användes inte i den här mappningen
+    assert prov["text"]["status"] == "generated" and "Instruktion" in prov["text"]["div"]
+    assert release["activity"]["coding"][0] == {"system": "http://terminology.hl7.org/CodeSystem/v3-DocumentCompletion",
+                                                "code": "LA", "display": "legally authenticated"}
+    assert all(e["fullUrl"].startswith("urn:uuid:") for e in bundle["entry"])
+    assert "extension" not in prov

@@ -215,6 +215,12 @@ genom MCP-servern. Varje steg visas medan det sker. Ändringarna läggs som **f�
 terminologitjänsten innan ett förslag sparas, och mappningsreglerna gäller som vid manuell
 redigering.
 
+Ett godkänt förslag från assistenten blir FHIR Provenance i releasens paket
+(`other/provenance.json`). Modellen anges som författare och den som startade assistenten
+som registrerare. Underlaget följer med: instruktionen, terminologitjänsten, kodsystemversioner
+och verktygsanrop. Ett projekt som tagits in från ett utkast får också en Provenance för
+utkastet i sin första release.
+
 ```bash
 pip install -e '.[assistent]'               # anthropic[mcp] och markdown
 pip install -e ../mcp-server                # MCP-servern (term-mcp), eller sätt TERM_MCP_COMMAND

@@ -210,3 +210,35 @@ def test_package_limits(monkeypatch):
     monkeypatch.setattr(ops, "FHIR_PACKAGE_FILES", 2)
     with pytest.raises(ops.OpError, match="fler än 2"):
         ops.resources_from_fhir_file(_tgz({f"package/{i}.json": {"resourceType": "ValueSet"} for i in range(5)}))
+
+
+def test_taken_in_draft_gets_origin_provenance_in_first_release_only(client, tmp_path):
+    import json as _json
+    from term_inlasning.admin import ops
+    from term_inlasning.admin.store import Workspace
+    draft = dict(PROPOSAL, publisher="Förslag från term-mcp (AI-stött, ej granskat)", date="2026-11-06",
+                 description="Förslag: Norska civilstånd till v3. Motivering: Civilstånd från norska system.")
+    bundle = {"resourceType": "Bundle", "type": "collection", "entry": [{"resource": draft}]}
+    r = client.post("/forslag/fil", files={"file": ("utkast.json", _json.dumps(bundle).encode())})
+    r = client.post(f"{r.url.path}/ta-in", data={"index": "0", "namespace": "ex"})
+    pid = r.url.path.split("/")[2]
+    ws = Workspace(tmp_path / "ws")
+    project = ws.get(pid)
+    assert project.template.codesystem.description == "Civilstånd från norska system."   # märkningen är borta
+    origin = project.origin
+    assert origin["ai"] and origin["source"] == "fil utkast.json" and len(origin["sha256"]) == 64
+    assert origin["url"] == PROPOSAL["url"] and origin["description"].startswith("Förslag:")
+    client.post(f"/p/{pid}/releases", data={"version": "1.0.0", "notes": "Första"})
+    rel = next(r for r in ws.releases(pid) if r.version == "1.0.0-rc.1")
+    first = ops.provenance_bundle(ws, ws.get(pid), rel)
+    intag = first["entry"][0]["resource"]
+    assert intag["id"].startswith("intag-") and intag["activity"]["coding"][0]["code"] == "CREATE"
+    assert intag["agent"][0]["who"]["reference"] == "#utkast" and intag["contained"][0]["resourceType"] == "Device"
+    assert any(e["what"]["identifier"]["value"] == origin["sha256"] for e in intag["entity"])
+    # Ursprunget hör till grundinnehållet: det följer med den första releasen men inte senare.
+    from term_inlasning.admin.store import Release
+    ws.save_release(pid, Release(version="1.0.0", status="release", resources=rel.resources, based_on=rel.version))
+    later = Release(version="1.1.0", status="release", resources=rel.resources, created="9999-01-01T00:00:00+00:00")
+    assert [e["resource"]["id"].split("-")[0] for e in ops.provenance_bundle(ws, ws.get(pid), later)["entry"]] \
+        == ["release"]
+

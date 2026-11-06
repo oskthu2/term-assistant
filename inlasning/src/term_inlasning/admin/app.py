@@ -1130,7 +1130,7 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         form = await request.form()
         cfg = settings()
         try:
-            _, resources = _file_resources(uid)
+            path, resources = _file_resources(uid)
             index = int(form.get("index", "-1"))
             if not 0 <= index < len(resources):
                 raise ops.OpError("Resursen finns inte i filen.")
@@ -1143,7 +1143,8 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             project = ops.project_from_resource(ws, resource, title, author(request),
                                                 namespace=cfg.namespace(form.get("namespace")),
                                                 classification=cfg.classification(form.get("classification")).key,
-                                                base_codes=await _translation_base(resource))
+                                                base_codes=await _translation_base(resource),
+                                                source=f"fil {path.name}")
         except KeyError:
             return render(request, "error.html", status=404, message="Filen finns inte.")
         except (ops.OpError, ValueError) as exc:
@@ -1165,7 +1166,8 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             project = ops.project_from_resource(ws, resource, title, author(request),
                                                 namespace=cfg.namespace(form.get("namespace")),
                                                 classification=cfg.classification(form.get("classification")).key,
-                                                base_codes=base_codes)
+                                                base_codes=base_codes,
+                                                source=f"terminologitjänsten {ServerConfig.from_env().base_url}")
         except ops.OpError as exc:
             return redirect("/tx-forslag", "; ".join(exc.messages))
         return redirect(f"/p/{project.id}", "Förslaget är taget in som projekt. Granska det innan release.")

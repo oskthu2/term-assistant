@@ -83,6 +83,8 @@ class Project(BaseModel):
     template: ImportTemplate
     questions: list[Question] = []
     flags: dict[str, dict[str, Flag]] = Field(default_factory=dict, description="Blad -> kod -> flagga")
+    origin: dict[str, Any] | None = Field(None, description="Varifrån projektet kom när det togs in från ett "
+                                                           "utkast (fil eller terminologitjänst) – blir Provenance")
 
 
 class Release(BaseModel):

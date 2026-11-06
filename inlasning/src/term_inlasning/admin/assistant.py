@@ -126,6 +126,21 @@ class Run:
         self.instruction, self.tx_client = instruction, tx_client
         self.created: list[Proposal] = []
         self.model = MODEL
+        self.tools_used: list[str] = []        # verktygsanrop i ordning, fram till varje förslag
+        self.mcp_server: dict[str, Any] = {}   # MCP-serverns server_info: terminologitjänst, edition, programvara
+        from ..config import ServerConfig
+        self.terminology_server = ServerConfig.from_env().base_url
+
+    def provenance(self, verified: list[dict] | None = None) -> dict[str, Any]:
+        """Underlaget för ett förslag: modell, instruktion, terminologitjänst, MCP-server, verktyg och de
+        kodsystemversioner som målkoderna kontrollerades mot."""
+        tools: dict[str, int] = {}
+        for name in self.tools_used:
+            tools[name] = tools.get(name, 0) + 1
+        return {"model": self.model, "created": now(), "kind": "assistent", "instruction": self.instruction,
+                "instruction_sha256": hashlib.sha256(self.instruction.encode()).hexdigest(),
+                "terminology_server": self.terminology_server, "mcp_server": self.mcp_server or None,
+                "tools": tools, "verified": verified or []}
 
     # -- projektets verktyg -------------------------------------------------------------
 
@@ -164,8 +179,9 @@ class Run:
                 skipped.append({"row": key, "orsak": "inga ändringar"})
                 continue
             pending.append((key, row, values, str(change.get("rationale") or "").strip()))
+        verified: dict[str, list[dict]] = {}
         if tpl.kind == "conceptmap":
-            pending, rejected = await self._check_mappings(pending)
+            pending, rejected, verified = await self._check_mappings(pending)
             skipped += rejected
         for key, row, values, rationale in pending:
             fingerprint = (sheet, key, json.dumps(values, sort_keys=True, default=str))
@@ -176,9 +192,7 @@ class Run:
                 id=editorial._new_id(), sheet=sheet, code=key, action="update", changes=values,
                 before={c: row.get(c) for c in values}, author=self.author, origin="ai",
                 rationale=f"[assistent] {rationale or 'ingen motivering'}",
-                provenance={"model": self.model, "created": now(), "kind": "assistent",
-                            "instruction": self.instruction,
-                            "instruction_sha256": hashlib.sha256(self.instruction.encode()).hexdigest()})
+                provenance=self.provenance(verified.get(key)))
             created.append(proposal)
             open_keys.add(fingerprint)
         if created:
@@ -190,13 +204,13 @@ class Run:
         return {"skapade": len(created), "hoppade_över": skipped,
                 "nästa": "Förslagen granskas under fliken Förslag." if created else None}
 
-    async def _check_mappings(self, pending: list[tuple]) -> tuple[list[tuple], list[dict]]:
+    async def _check_mappings(self, pending: list[tuple]) -> tuple[list[tuple], list[dict], dict[str, list[dict]]]:
         """Målkoder valideras mot terminologitjänsten och raden måste uppfylla mappningsreglerna."""
         tpl = self.project.template
         target_col = tpl.column(ColumnRole.MAP_TARGET).source_column
         display_col = tpl.column(ColumnRole.MAP_TARGET_DISPLAY).source_column
         relation_col = tpl.column(ColumnRole.MAP_RELATION).source_column
-        ok, rejected = [], []
+        ok, rejected, verified = [], [], {}
         codes = {v[target_col] for _, _, v, _ in pending if v.get(target_col)}
         found: dict[str, dict] = {}
         if codes:
@@ -216,6 +230,8 @@ class Run:
                     continue
                 if not values.get(display_col) and result.get("display"):
                     values[display_col] = result["display"]
+                verified[key] = [{"system": tpl.mapping.target_system, "code": code,
+                                  "version": result.get("version"), "display": result.get("display")}]
             if values.get(relation_col):
                 try:
                     values[relation_col] = conceptmap.label(conceptmap.relation_key(values[relation_col]))
@@ -227,7 +243,7 @@ class Run:
                 rejected.append({"row": key, "orsak": "; ".join(problems)})
                 continue
             ok.append((key, row, values, rationale))
-        return ok, rejected
+        return ok, rejected, verified
 
 
 @asynccontextmanager
@@ -243,6 +259,22 @@ async def mcp_session(command: list[str]):
         async with ClientSession(read, write) as session:
             await session.initialize()
             yield session
+
+
+async def _server_info(session) -> dict[str, Any]:
+    """MCP-serverns egen uppgift om terminologitjänst, SNOMED CT-edition och programvara (för proveniensen)."""
+    try:
+        result = await session.call_tool("server_info", {})
+        data = result.structured_content
+        if data is None:
+            data = json.loads(" ".join(getattr(c, "text", "") for c in result.content))
+    except Exception:  # noqa: BLE001 – proveniensen får hellre sakna detta än att assistenten stoppas
+        return {}
+    data = data.get("result", data) if isinstance(data, dict) else {}
+    software = data.get("software") or {}
+    return {k: v for k, v in {"base_url": data.get("base_url"), "snomed_edition": data.get("snomed_edition"),
+                              "software": " ".join(str(software.get(k)) for k in ("name", "version")
+                                                   if software.get(k)) or None}.items() if v}
 
 
 def _result_text(result: dict) -> str:
@@ -280,6 +312,8 @@ async def execute(run: Run, history: list[dict], client, command: list[str],
         async with mcp_session(command) as session:
             listed = await session.list_tools()
             tools = [async_mcp_tool(t, session) for t in listed.tools if t.name in MCP_TOOLS]
+            if any(t.name == "server_info" for t in listed.tools):
+                run.mcp_server = await _server_info(session)
             tools += [project_rows, propose_changes]
             context = json.dumps(project_context(run.project, run.data), ensure_ascii=False, default=str)
             first = not history
@@ -301,6 +335,7 @@ async def execute(run: Run, history: list[dict], client, command: list[str],
                         await emit("text", {"text": block.text})
                     elif block.type == "tool_use":
                         names[block.id] = block.name
+                        run.tools_used.append(block.name)
                         await emit("tool_use", {"id": block.id, "name": block.name, "input": block.input})
                 response = await runner.generate_tool_call_response()
                 if response is not None:
