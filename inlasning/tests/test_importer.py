@@ -184,6 +184,7 @@ def test_negation_is_never_a_match():
 
 
 def test_ai_refinement_with_stub_client(workbook):
+    pytest.importorskip("anthropic")  # tillvalet [ai]
     from types import SimpleNamespace
 
     from term_inlasning.importer.ai import AiMapping, refine_with_claude
