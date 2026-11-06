@@ -9,7 +9,8 @@
       "env": {
         "PYTHONPATH": "mcp-server/src",
         "TX_BASE_URL": "https://tx-nordics.fhir.org/fhir",
-        "TX_LANGUAGE": "sv"
+        "TX_LANGUAGE": "sv",
+        "TX_SNOMED_EDITION": "se"
       }
     }
   }

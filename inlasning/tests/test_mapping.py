@@ -131,3 +131,26 @@ def test_take_in_proposals_from_terminology_server(client):
     vs_pid = r.url.path.split("/")[2]
     vs = client.get(f"/p/{vs_pid}/preview.json").json()["entry"][0]["resource"]
     assert vs["compose"]["include"][0]["concept"][0]["code"] == "M"
+
+
+def test_take_in_ecl_valueset_uses_expansion_snapshot(tmp_path):
+    from term_inlasning.admin import ops
+    from term_inlasning.admin.store import Workspace
+    sct = "http://snomed.info/sct"
+    vs = {"resourceType": "ValueSet", "id": "Diabetes", "url": "http://example.org/fhir/ValueSet/diabetes",
+          "status": "draft", "title": "Diabetes",
+          "compose": {"include": [{"system": sct, "filter": [
+              {"property": "constraint", "op": "=", "value": "<< 73211009"}]}]},
+          "expansion": {"timestamp": "2026-11-06T18:00:00+00:00", "total": 2,
+                        "parameter": [{"name": "used-codesystem",
+                                       "valueUri": f"{sct}|{sct}/45991000052106/version/20251130"}],
+                        "contains": [{"system": sct, "code": "44054006", "display": "diabetes mellitus typ 2"},
+                                     {"system": sct, "code": "46635009", "display": "diabetes mellitus typ 1"}]}}
+    ws = Workspace(tmp_path / "ws")
+    project = ops.project_from_resource(ws, vs, "Diabetes", "anna")
+    rows = ws.data(project.id)["Urval"].rows
+    assert [r["Kod"] for r in rows] == ["44054006", "46635009"] and rows[0]["Kodsystem"] == sct
+    assert any("constraint = << 73211009" in q.text and "45991000052106" in q.text for q in project.questions)
+    partial = vs | {"id": "Stor", "expansion": vs["expansion"] | {"total": 5000}}
+    with pytest.raises(ops.OpError, match="fullständig"):
+        ops.project_from_resource(ws, partial, "Stor", "anna")

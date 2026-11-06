@@ -9,7 +9,10 @@ terminologitjänst via FHIR, inte med varandra.
 Miljövariabler:
 
     TX_BASE_URL     terminologitjänstens FHIR-bas (standard https://tx.fhir.org/r4)
-    TX_TOKEN        valfri bearer-token
+    TX_TOKEN        valfri bearer-token; eller TX_TOKEN_URL/TX_CLIENT_ID/TX_CLIENT_SECRET/TX_SCOPE
+                    för OAuth2 client credentials med automatisk förnyelse
+    TX_SNOMED_EDITION  SNOMED CT-edition när ingen version anges (t.ex. se = 45991000052106)
+    TX_PROPOSAL_URL annan server för förslagen (t.ex. HAPI) när TX_BASE_URL bara ska läsas
     TX_LANGUAGE     föredraget språk för displaytexter (standard sv)
     TX_ALLOW_WRITE  "1" aktiverar förslagsverktygen (propose_valueset, propose_conceptmap,
                     propose_translation, withdraw_proposal). Avstängt som standard – använd mot
@@ -32,7 +35,7 @@ import httpx2
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from .config import ServerConfig
+from .config import SNOMED, ServerConfig
 from . import proposals
 from .fhir.client import TerminologyClient, TerminologyError
 
@@ -45,16 +48,22 @@ search_concepts, concept_hierarchy, subsumes och translate_code. Hitta aldrig p�
 koder – slå upp eller validera dem. validate_valueset kontrollerar alla koder i
 en värdemängd.
 
+SNOMED CT (system http://snomed.info/sct): sök med snomed_ecl och avgränsa till
+rätt del av hierarkin, t.ex. "<< 404684003" (kliniska fynd) eller "<< 71388002"
+(procedurer), gärna med en sökterm. Fritext över hela SNOMED CT ger mycket brus.
+Termerna kommer från den edition server_info visar (svenska om den är satt).
 Om förslagsverktygen finns (propose_valueset, propose_conceptmap,
 propose_translation) skapar de förslag på tjänsten: utkast som granskas i
 administrationsverktyget innan de släpps. Hämta koderna och deras texter med
 verktygen innan du föreslår något, motivera val som inte är självklara, och
 säg vad som skapades (canonical URL, antal koder). list_proposals visar
-ogranskade förslag."""
+ogranskade förslag. Ett urval ur SNOMED CT föreslås helst med ett ECL-uttryck
+(propose_valueset med ecl) i stället för en lång kodlista."""
 
 mcp = MCPServer("term-mcp", instructions=INSTRUCTIONS)
 
 _client: TerminologyClient | None = None
+_writer: TerminologyClient | None = None
 
 
 def tool(fn):
@@ -72,10 +81,20 @@ def tool(fn):
 
 
 def client() -> TerminologyClient:
+    """Terminologitjänsten som läses och som koder kontrolleras mot."""
     global _client
     if _client is None:
         _client = TerminologyClient(ServerConfig.from_env())
     return _client
+
+
+def writer() -> TerminologyClient:
+    """Servern som förslagen skrivs till: TX_PROPOSAL_URL om den är satt, annars samma som client()."""
+    global _writer
+    if _writer is None:
+        cfg = client().config
+        _writer = client() if not cfg.proposal_url else TerminologyClient(cfg.for_proposals())
+    return _writer
 
 
 def _summary(resource: dict[str, Any]) -> dict[str, Any]:
@@ -99,7 +118,10 @@ async def _search(resource_type: str, query: str | None, count: int) -> list[dic
 async def server_info() -> dict:
     """Visa vilken terminologitjänst som används, dess programvara/FHIR-version och om skrivning är på."""
     cfg = client().config
-    return {"base_url": cfg.base_url, "write_enabled": cfg.allow_write, **await client().capabilities()}
+    return {"base_url": cfg.base_url, "write_enabled": cfg.allow_write,
+            "proposal_server": writer().config.base_url if cfg.allow_write else None,
+            "snomed_edition": cfg.snomed_edition or "serverns standard", "language": cfg.language,
+            **await client().capabilities()}
 
 
 @tool
@@ -145,18 +167,52 @@ async def lookup_code(system: str, code: str, version: str | None = None) -> dic
     """Slå upp ett begrepp: display, designations och egenskaper ($lookup). Översättningar i
     CodeSystem-supplement på tjänsten (t.ex. svenska språkpaket och förslag) tas med under `translations`."""
     result = await client().lookup(system, code, version)
+    if system == SNOMED:
+        result = _compact_snomed(result)
     translations = await _supplement_translations(system, code)
     if translations:
         result["translations"] = translations
     return result
 
 
+def _compact_snomed(result: dict) -> dict:
+    """$lookup för SNOMED CT ger alla barn och samma term flera gånger (en per språkreferensmängd).
+    Barnen räknas (concept_hierarchy visar dem med text) och termerna slås ihop per språk."""
+    props = [p for p in result.get("property", []) if isinstance(p, dict)]
+    children = [p.get("value") for p in props if p.get("code") == "child"]
+    out = {k: v for k, v in result.items() if k not in ("property", "designation")}
+    out["parents"] = [p.get("value") for p in props if p.get("code") == "parent"]
+    out["children_count"] = len(children)
+    for p in props:
+        if p.get("code") not in ("parent", "child"):
+            out.setdefault("properties", {})[p.get("code")] = p.get("value")
+    terms, seen = [], set()
+    for d in result.get("designation", []):
+        if not isinstance(d, dict) or not d.get("value"):
+            continue
+        language = (d.get("language") or "").split("-x-")[0]
+        use = d.get("use") or {}
+        kind = "föredragen" if use.get("code") in ("preferredForLanguage", "display") else use.get("display")
+        key = (language, d["value"])
+        if key in seen:
+            if kind == "föredragen":
+                next(t for t in terms if (t["language"], t["value"]) == key)["use"] = kind
+            continue
+        seen.add(key)
+        terms.append({"language": language, "value": d["value"], "use": kind})
+    out["terms"] = terms
+    return out
+
+
 async def _supplement_translations(system: str, code: str) -> list[dict]:
-    """Alla servrar använder inte supplement i $lookup (HAPI gör det inte), så de läses direkt."""
-    try:
-        supplements = await client().search("CodeSystem", count=50, supplements=system, _summary="false")
-    except TerminologyError:
-        return []
+    """Alla servrar använder inte supplement i $lookup (HAPI gör det inte), så de läses direkt –
+    även från förslagsservern, så att föreslagna översättningar syns."""
+    supplements = []
+    for tx in dict.fromkeys((client(), writer())):
+        try:
+            supplements += await tx.search("CodeSystem", count=50, supplements=system, _summary="false")
+        except (TerminologyError, httpx2.HTTPError):
+            continue
     out = []
     for cs in supplements:
         for concept in _flat_concepts(cs.get("concept", [])):
@@ -203,20 +259,45 @@ def _flat(concepts: list[dict]):
 
 @tool
 async def expand_valueset(url: str, filter: str | None = None, count: int = 50, offset: int = 0) -> dict:
-    """Expandera ett ValueSet, valfritt med textfilter och sidning ($expand)."""
+    """Expandera ett ValueSet, valfritt med textfilter och sidning ($expand). Fungerar också med
+    implicita värdemängder, t.ex. http://snomed.info/sct?fhir_vs=isa/73211009."""
     return await client().expand(url=url, filter=filter, count=count, offset=offset)
 
 
 @tool
 async def search_concepts(system: str, text: str, count: int = 20) -> dict:
-    """Fritextsök begrepp i ett helt kodsystem (implicit ValueSet + $expand med filter)."""
+    """Fritextsök begrepp i ett helt kodsystem (implicit ValueSet + $expand med filter).
+    För SNOMED CT: använd hellre snomed_ecl med en avgränsning i hierarkin."""
     vs = {"resourceType": "ValueSet", "compose": {"include": [{"system": system}]}}
     return await client().expand(valueset=vs, filter=text, count=count)
 
 
 @tool
+async def snomed_ecl(ecl: str, text: str | None = None, count: int = 50, offset: int = 0) -> dict:
+    """Sök i SNOMED CT med ECL (Expression Constraint Language), valfritt med en sökterm.
+    Exempel: "<< 73211009" (diabetes och alla undertyper), "< 404684003" (kliniska fynd),
+    "<! 73211009" (bara direkta barn), "<< 71388002 : 363704007 = << 80891009" (procedurer på hjärtat),
+    "^ 721144007" (medlemmar i en referensmängd). `total` anger hur många begrepp uttrycket ger."""
+    if not ecl.strip():
+        raise ValueError("Ange ett ECL-uttryck, t.ex. << 404684003.")
+    result = await client().ecl(ecl.strip(), filter=text, count=count, offset=offset)
+    return {"ecl": ecl.strip(), "edition": client().config.snomed_edition or "serverns standard"} | result
+
+
+@tool
 async def concept_hierarchy(system: str, code: str, version: str | None = None) -> dict:
     """Navigera hierarkin: föräldrar och barn (eller ättlingar) för ett begrepp."""
+    if system == SNOMED and not version:
+        try:
+            parents, children = await asyncio.gather(client().ecl(f">! {code}", count=50),
+                                                     client().ecl(f"<! {code}", count=100))
+        except TerminologyError:  # servern stöder inte ECL: föräldrar och barn ur $lookup i stället
+            return await client().hierarchy(system, code, version)
+        info = await client().lookup(system, code)
+        return {"code": code, "display": info.get("display"), "version": info.get("version"),
+                "parents": [{"code": c["code"], "display": c.get("display")} for c in parents["contains"]],
+                "children": [{"code": c["code"], "display": c.get("display")} for c in children["contains"]],
+                "children_total": children.get("total")}
     return await client().hierarchy(system, code, version)
 
 
@@ -281,15 +362,18 @@ async def validate_codes(tx: TerminologyClient, valueset: dict, concurrency: int
 @tool
 async def list_proposals() -> list[dict]:
     """Lista förslag (urval, mappningar, översättningar) som skapats på tjänsten och ännu inte granskats."""
-    return await proposals.list_all(client())
+    return await proposals.list_all(writer())
 
 
-async def propose_valueset(url: str, name: str, title: str, concepts: list[dict],
-                           rationale: str | None = None, version: str = "0.1.0") -> dict:
-    """Föreslå ett urval (ValueSet) med uttryckligen listade koder. `concepts`: [{system, code, display?}].
-    Koderna kontrolleras först; okända koder gör att inget skapas. Skapas som utkast märkt "förslag"
-    och granskas sedan i administrationsverktyget. Samma namn ersätter ett tidigare förslag."""
-    return await proposals.valueset(client(), url, name, title, concepts, rationale, version)
+async def propose_valueset(url: str, name: str, title: str, concepts: list[dict] | None = None,
+                           ecl: str | None = None, rationale: str | None = None, version: str = "0.1.0") -> dict:
+    """Föreslå ett urval (ValueSet): uttryckligen listade koder (`concepts`: [{system, code, display?}])
+    och/eller, för SNOMED CT, ett ECL-uttryck (`ecl`, t.ex. "<< 73211009") som definierar urvalet.
+    Koderna och uttrycket kontrolleras först; okända koder eller ett ogiltigt uttryck gör att inget
+    skapas. Skapas som utkast märkt "förslag" och granskas sedan i administrationsverktyget. Samma
+    namn ersätter ett tidigare förslag."""
+    return await proposals.valueset(client(), url, name, title, concepts or [], rationale, version, ecl=ecl,
+                                    store=writer())
 
 
 async def propose_conceptmap(url: str, name: str, title: str, source_system: str, target_system: str,
@@ -303,7 +387,7 @@ async def propose_conceptmap(url: str, name: str, title: str, source_system: str
     Med `source_valueset` rapporteras vilka källkoder som saknar mappning. Alla koder kontrolleras först."""
     return await proposals.conceptmap(client(), url, name, title, source_system, target_system, mappings,
                                       rationale, source_valueset, target_valueset, version,
-                                      client().config.fhir_version)
+                                      client().config.fhir_version, store=writer())
 
 
 async def propose_translation(codesystem: str, language: str, translations: list[dict],
@@ -313,12 +397,12 @@ async def propose_translation(codesystem: str, language: str, translations: list
     `translations`: [{code, display}] där display är texten på målspråket `language` (BCP-47, t.ex. sv).
     Översätt utifrån kodsystemets egna displaytexter och definitioner, inte från minnet."""
     return await proposals.translation(client(), codesystem, language, translations, url, name, title, rationale,
-                                       proposal_base=client().config.proposal_base)
+                                       proposal_base=client().config.proposal_base, store=writer())
 
 
 async def withdraw_proposal(resource_type: str, id: str) -> dict:
     """Ta bort ett förslag (bara resurser märkta som förslag kan tas bort)."""
-    return await proposals.withdraw(client(), resource_type, id)
+    return await proposals.withdraw(writer(), resource_type, id)
 
 
 if ServerConfig.from_env().allow_write:

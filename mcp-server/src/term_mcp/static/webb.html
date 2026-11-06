@@ -100,7 +100,7 @@ function scroll() { window.scrollTo({top: document.body.scrollHeight, behavior: 
 
 async function start() {
   cfg = await (await fetch("api/config")).json();
-  $("tx").textContent = cfg.tx;
+  $("tx").textContent = cfg.proposalTx && cfg.proposalTx !== cfg.tx ? `${cfg.tx} · förslag → ${cfg.proposalTx}` : cfg.tx;
   $("adminlink").href = cfg.admin + "/tx-forslag";
   $("nokey").hidden = cfg.apiKey;
   if (!cfg.writeAllowed) { $("forslag").checked = false; $("forslag").disabled = true; }

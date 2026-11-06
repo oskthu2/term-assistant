@@ -25,10 +25,14 @@ term-mcp --http                                 # streamable HTTP
 | Miljövariabel | Betydelse |
 |---|---|
 | `TX_BASE_URL` | terminologitjänstens FHIR-bas |
-| `TX_TOKEN` | valfri bearer-token |
+| `TX_TOKEN` | valfri statisk bearer-token |
+| `TX_TOKEN_URL`, `TX_CLIENT_ID`, `TX_CLIENT_SECRET`, `TX_SCOPE` | OAuth2 client credentials: token hämtas och förnyas automatiskt. Hemligheten läggs som miljövariabel eller Codespaces-hemlighet, aldrig i en fil |
+| `TX_SNOMED_EDITION` | SNOMED CT-edition när ingen version anges: `se` (svenska, 45991000052106), `no`, `dk`, `fi`, `int`, ett modul-id eller en hel edition-URI med datum |
 | `TX_LANGUAGE` | språk för displaytexter (standard `sv`) |
 | `TX_ALLOW_WRITE=1` | slår på förslagsverktygen. Avstängt som standard: använd det mot en testserver |
 | `TX_PROPOSAL_BASE` | bas för förslagens canonical URL:er när ingen anges (standard `http://example.org/fhir`) |
+| `TX_PROPOSAL_URL` | annan FHIR-server som förslagen skrivs till, t.ex. en HAPI-testserver, medan uppslag och kodkontroll görs mot `TX_BASE_URL` |
+| `TX_PROPOSAL_TOKEN` | valfri bearer-token för förslagsservern |
 | `FHIR_VERSION` | `R4` (standard) eller `R5`, styr ConceptMap-formatet i förslag |
 
 | Verktyg | FHIR-operation |
@@ -39,12 +43,13 @@ term-mcp --http                                 # streamable HTTP
 | `validate_code` | `CodeSystem/$validate-code`, `ValueSet/$validate-code` (hämtar `system` ur expansionen om servern kräver det) |
 | `expand_valueset` | `ValueSet/$expand` |
 | `search_concepts` | `$expand` av implicit ValueSet med `filter` |
+| `snomed_ecl` | `$expand` med ECL (`constraint`), valfritt med sökterm: SNOMED CT avgränsat till en del av hierarkin |
 | `concept_hierarchy` | `$lookup` (parent/child), med fallback till `$expand` + `is-a` |
 | `subsumes` | `CodeSystem/$subsumes` |
 | `translate_code` | `ConceptMap/$translate` |
 | `validate_valueset` | `$validate-code` för varje uttryckligen listad kod i ett ValueSet |
 | `list_proposals` | sökning på förslagstaggen: ogranskade förslag |
-| `propose_valueset` *(förslag)* | urval: ValueSet med uttryckligen listade koder |
+| `propose_valueset` *(förslag)* | urval: ValueSet med uttryckligen listade koder och/eller ett ECL-uttryck för SNOMED CT (med expansionen som ögonblicksbild) |
 | `propose_conceptmap` *(förslag)* | mappning: ConceptMap från ett kodsystem till ett annat, med relation per rad och täckning mot källvärdemängden |
 | `propose_translation` *(förslag)* | översättning: CodeSystem-supplement med översatt text och designation på målspråket |
 | `withdraw_proposal` *(förslag)* | ta bort ett eget förslag |
@@ -74,7 +79,31 @@ terminologitjänsten ersätter den förslaget.
 Fel från terminologitjänsten kommer fram till modellen som verktygsfel med
 serverns meddelande, så att den kan rätta sig, till exempel byta canonical URL.
 
-`../.mcp.json` registrerar servern i Claude Code mot tx-nordics.
+### SNOMED CT på Ontoserver (Inera, tx-nordics)
+
+```bash
+export TX_BASE_URL=https://tx-nordics.fhir.org/fhir   # Ontoserver
+export TX_SNOMED_EDITION=se                           # svensk edition: svenska termer
+export TX_PROPOSAL_URL=http://localhost:8080/fhir     # förslagen skrivs till HAPI, inte till Ontoserver
+TX_ALLOW_WRITE=1 term-mcp-webb --host 0.0.0.0
+```
+
+- **Svenska termer:** utan `TX_SNOMED_EDITION` svarar Ontoserver med sin standardedition, ofta
+  den internationella. Editionen skickas i alla SNOMED-anrop där ingen version anges.
+- **ECL:** `snomed_ecl` söker inom en del av hierarkin, t.ex. `<< 404684003` (kliniska fynd)
+  med söktermen "typ 2". `concept_hierarchy` visar föräldrar och barn med svensk text.
+- **Urval med ECL:** `propose_valueset` med `ecl` skapar ett intensionellt ValueSet. Expansionen
+  sparas i förslaget (upp till 1000 begrepp), med edition och datum, och administrationsverktyget
+  tar in det som kodlista.
+- **Två servrar:** med `TX_PROPOSAL_URL` kontrolleras koderna mot Ontoserver medan förslagen
+  hamnar på testservern. Peka administrationsverktyget (`TX_BASE_URL` där) mot förslagsservern
+  för att granska dem.
+- **Inloggning:** Ineras tjänst och andra skyddade Ontoserver-installationer använder OAuth2.
+  Sätt `TX_TOKEN_URL`, `TX_CLIENT_ID` och `TX_CLIENT_SECRET`, så hämtas och förnyas tokenen.
+- **Licens:** SNOMED CT får användas i Sverige under Socialstyrelsens medlemslicens. Stäm av
+  med Socialstyrelsen innan SNOMED-innehåll skickas till en extern AI-tjänst i drift.
+
+`../.mcp.json` registrerar servern i Claude Code mot tx-nordics med svensk SNOMED CT-edition.
 
 ## Webbgränssnittet (`term-mcp-webb`)
 

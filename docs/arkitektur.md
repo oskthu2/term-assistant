@@ -41,9 +41,39 @@ först när de publicerats till terminologitjänsten, direkt eller via ett paket
 
 `TerminologyClient` använder bara FHIR R4-standardoperationer, så samma server
 fungerar mot alla tjänster. Val av tjänst görs med `TX_BASE_URL`. Autentisering
-görs med bearer-token (`TX_TOKEN`). Om tjänsten kräver något annat, t.ex.
-klientcertifikat (SITHS), är det klientens `httpx2.AsyncClient` som ska
-utökas.
+görs med en statisk bearer-token (`TX_TOKEN`) eller med OAuth2 client credentials
+(`TX_TOKEN_URL`, `TX_CLIENT_ID`, `TX_CLIENT_SECRET`, `TX_SCOPE`). Tokenen hämtas vid
+första anropet, förnyas en minut före utgång och en gång till om servern svarar 401.
+Om tjänsten kräver något annat, t.ex. klientcertifikat (SITHS), är det klientens
+`httpx2.AsyncClient` som ska utökas.
+
+**SNOMED CT på Ontoserver** (Ineras terminologitjänst, tx-nordics):
+
+* **Edition.** Utan versionsangivelse väljer Ontoserver sin standardedition, ofta den
+  internationella, och då kommer inga svenska termer. `TX_SNOMED_EDITION` (t.ex. `se` =
+  `http://snomed.info/sct/45991000052106`) skickas som `version` i `$lookup`,
+  `CodeSystem/$validate-code` och `$subsumes`, och som `system-version` i `$expand` och
+  `ValueSet/$validate-code`, men bara för SNOMED CT och bara när anroparen inte angett en
+  version. Ett modul-id utan datum ger den senaste versionen av editionen.
+* **ECL.** `snomed_ecl` expanderar ett inline-ValueSet med filtret `constraint` och kan
+  kombineras med en sökterm. Fritext över hela SNOMED CT ger för mycket brus för att
+  modellen ska kunna välja rätt.
+* **Kompakta svar.** `$lookup` för SNOMED CT ger alla barn och samma term en gång per
+  språkreferensmängd. `lookup_code` räknar barnen och slår ihop termerna per språk.
+  `concept_hierarchy` hämtar föräldrar och barn med text via ECL (`>!` och `<!`).
+* **ECL-urval som förslag.** `propose_valueset` med `ecl` skapar ett intensionellt ValueSet
+  (`compose.include.filter`) och sparar expansionen som ögonblicksbild (upp till 1000
+  begrepp), med vilken edition den gjordes mot. Administrationsverktyget tar in urvalet
+  som kodlista ur ögonblicksbilden och behöver alltså inte själv nå Ontoserver.
+
+**Läsa från en server, skriva förslag till en annan.** Med `TX_PROPOSAL_URL` läser och
+kontrollerar MCP-servern mot `TX_BASE_URL` (t.ex. Ineras Ontoserver i drift) men skriver
+förslagen till en annan server (t.ex. HAPI i en testmiljö). Kodkontrollen sker alltså mot
+den riktiga terminologitjänsten även när förslagsservern inte har kodsystemen. En URL som
+finns som granskad resurs på någon av servrarna kan inte tas av ett förslag.
+`list_proposals`, `withdraw_proposal` och webbgränssnittets förslagslista använder
+förslagsservern. Administrationsverktygets **Förslag från terminologitjänsten** ska då
+peka på förslagsservern.
 
 Hierarkinavigering är den operation som skiljer mest mellan servrar. Klienten
 frågar först `$lookup` efter `parent`/`child`. Om inga barn kommer tillbaka

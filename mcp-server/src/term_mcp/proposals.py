@@ -6,10 +6,14 @@ får skrivas över av ett nytt förslag med samma id, men aldrig en resurs utan
 taggen – granskat innehåll ändras bara via administrationsverktyget. Koder
 kontrolleras mot tjänsten innan något skrivs; okända koder stoppar förslaget.
 
+Kontrollen görs mot terminologitjänsten (``tx``), men förslaget kan skrivas till en
+annan server (``store``, t.ex. en HAPI-testserver framför en Ontoserver i drift).
+
 ==================  ===================================================================
 förslag             FHIR
 ==================  ===================================================================
-urval               ValueSet med uttryckligen listade koder
+urval               ValueSet med uttryckligen listade koder och/eller ett ECL-uttryck för SNOMED CT
+                    (``filter`` med ``constraint``); expansionen sparas som ögonblicksbild
 mappning            ConceptMap (R4: equivalence, R5: relationship); källkoder utan
                     motsvarighet blir ``unmatched`` (R4) / ``noMap`` (R5)
 översättning        CodeSystem-supplement (``content = supplement``) med översatt
@@ -20,8 +24,10 @@ mappning            ConceptMap (R4: equivalence, R5: relationship); källkoder u
 from __future__ import annotations
 
 import re
-from datetime import date
-from .fhir.client import TerminologyClient
+from datetime import date, datetime, timezone
+
+from .config import SNOMED
+from .fhir.client import TerminologyClient, TerminologyError
 
 PROPOSAL_TAG = {"system": "urn:term-assistant:arbetsflode", "code": "forslag", "display": "Förslag – ej granskat"}
 PUBLISHER = "Förslag från term-mcp (AI-stött, ej granskat)"
@@ -88,6 +94,17 @@ async def guard_url(tx: TerminologyClient, resource_type: str, url: str, rid: st
         raise ProposalError(f"{resource_type}/{rid} finns redan och är inget förslag. Välj ett annat namn.")
 
 
+async def guard(tx: TerminologyClient, store: TerminologyClient, resource_type: str, url: str, rid: str) -> None:
+    """Som guard_url, och när förslagen skrivs till en annan server: URL:en får inte heller finnas på
+    terminologitjänsten (där ligger det granskade innehållet)."""
+    await guard_url(store, resource_type, url, rid)
+    if store is not tx:
+        for existing in await tx.search(resource_type, count=5, url=url):
+            if not is_proposal(existing):
+                raise ProposalError(f"{resource_type} {url} finns redan på terminologitjänsten {tx.config.base_url}. "
+                                    "Välj en ny URL för förslaget.")
+
+
 async def check_codes(tx: TerminologyClient, system: str, codes: list[str]) -> dict[str, dict]:
     """{kod: {ok, display, inactive, message}} via $validate-code."""
     import asyncio
@@ -106,8 +123,35 @@ def _unknown(system: str, result: dict[str, dict]) -> list[dict]:
     return [{"system": system, "code": c, "message": r["message"]} for c, r in result.items() if not r["ok"]]
 
 
+SNAPSHOT_LIMIT = 1000  # ECL-urval med fler begrepp sparas utan kodlista
+
+
+async def _ecl_include(tx: TerminologyClient, ecl: str) -> tuple[dict, dict]:
+    """Kontrollera ECL-uttrycket mot tjänsten och ta en ögonblicksbild av expansionen."""
+    try:
+        first = await tx.ecl(ecl, count=SNAPSHOT_LIMIT)
+    except TerminologyError as exc:
+        raise ProposalError(f"ECL-uttrycket '{ecl}' godtogs inte av terminologitjänsten: {exc}") from exc
+    total = first.get("total") if first.get("total") is not None else len(first["contains"])
+    if not total:
+        raise ProposalError(f"ECL-uttrycket '{ecl}' ger inga begrepp – inget förslag skapades.")
+    include = {"system": SNOMED, "filter": [{"property": "constraint", "op": "=", "value": ecl}]}
+    used = first.get("used_codesystems") or [f"{SNOMED}|{v}" for v in
+                                              sorted({c["version"] for c in first["contains"] if c.get("version")})]
+    expansion = {"timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "total": total,
+                 "parameter": [{"name": "used-codesystem", "valueUri": u} for u in used]}
+    if total <= SNAPSHOT_LIMIT:
+        expansion["contains"] = [{"system": SNOMED, "code": c["code"], "display": c.get("display")}
+                                 for c in first["contains"]]
+    return include, expansion
+
+
 async def valueset(tx: TerminologyClient, url: str, name: str, title: str, concepts: list[dict],
-                   rationale: str | None = None, version: str = "0.1.0") -> dict:
+                   rationale: str | None = None, version: str = "0.1.0", ecl: str | None = None,
+                   store: TerminologyClient | None = None) -> dict:
+    store = store or tx
+    if not concepts and not (ecl or "").strip():
+        raise ProposalError("Ange koder (concepts) eller ett ECL-uttryck (ecl).")
     by_system: dict[str, list[dict]] = {}
     for c in concepts:
         if not c.get("system") or not c.get("code"):
@@ -122,17 +166,30 @@ async def valueset(tx: TerminologyClient, url: str, name: str, title: str, conce
             {"code": c["code"], "display": c.get("display") or result[c["code"]]["display"]} for c in items]})
     if unknown:
         return {"created": False, "reason": "Okända koder – inget förslag skapades.", "unknown": unknown}
+    expansion = None
+    if (ecl or "").strip():
+        ecl_include, expansion = await _ecl_include(tx, ecl.strip())
+        include.append(ecl_include)
     vs = _base("ValueSet", url, name, title, version, rationale) | {"compose": {"include": include}}
-    await guard_url(tx, "ValueSet", url, vs["id"])
-    await tx.put_resource(vs)
-    return {"created": True, "resourceType": "ValueSet", "id": vs["id"], "url": url, "version": version,
-            "codes": len(concepts), "inactive": inactive}
+    if expansion:
+        vs["expansion"] = expansion
+    await guard(tx, store, "ValueSet", url, vs["id"])
+    await store.put_resource(vs)
+    result = {"created": True, "resourceType": "ValueSet", "id": vs["id"], "url": url, "version": version,
+              "codes": len(concepts), "inactive": inactive}
+    if expansion:
+        result |= {"ecl": ecl.strip(), "ecl_concepts": expansion["total"],
+                   "snapshot": "contains" in expansion,
+                   "edition": [p["valueUri"] for p in expansion["parameter"]]}
+    return result
 
 
 async def conceptmap(tx: TerminologyClient, url: str, name: str, title: str, source_system: str,
                      target_system: str, mappings: list[dict], rationale: str | None = None,
                      source_valueset: str | None = None, target_valueset: str | None = None,
-                     version: str = "0.1.0", fhir_version: str = "R4") -> dict:
+                     version: str = "0.1.0", fhir_version: str = "R4",
+                     store: TerminologyClient | None = None) -> dict:
+    store = store or tx
     rows = []
     for m in mappings:
         rel = relation(m.get("relation"))
@@ -177,8 +234,8 @@ async def conceptmap(tx: TerminologyClient, url: str, name: str, title: str, sou
     else:
         cm |= {k: v for k, v in {"sourceUri": source_valueset, "targetUri": target_valueset}.items() if v}
     cm["group"] = [{"source": source_system, "target": target_system, "element": list(elements.values())}]
-    await guard_url(tx, "ConceptMap", url, cm["id"])
-    await tx.put_resource(cm)
+    await guard(tx, store, "ConceptMap", url, cm["id"])
+    await store.put_resource(cm)
     coverage = None
     if source_valueset:
         expansion = await tx.expand(url=source_valueset, count=1000)
@@ -194,7 +251,9 @@ async def conceptmap(tx: TerminologyClient, url: str, name: str, title: str, sou
 async def translation(tx: TerminologyClient, codesystem: str, language: str, translations: list[dict],
                       url: str | None = None, name: str | None = None, title: str | None = None,
                       rationale: str | None = None, version: str = "0.1.0",
-                      proposal_base: str = "http://example.org/fhir") -> dict:
+                      proposal_base: str = "http://example.org/fhir",
+                      store: TerminologyClient | None = None) -> dict:
+    store = store or tx
     base = await tx.read_canonical("CodeSystem", codesystem)
     if base is None:
         raise ProposalError(f"Kodsystemet {codesystem} finns inte på tjänsten – det går bara att föreslå "
@@ -216,8 +275,8 @@ async def translation(tx: TerminologyClient, codesystem: str, language: str, tra
         "concept": [{"code": t["code"], "display": t["display"],
                      "designation": [{"language": language, "value": t["display"]}]} for t in translations],
     }
-    await guard_url(tx, "CodeSystem", url, cs["id"])
-    await tx.put_resource(cs)
+    await guard(tx, store, "CodeSystem", url, cs["id"])
+    await store.put_resource(cs)
     total = base.get("count") or len(base.get("concept", []))
     return {"created": True, "resourceType": "CodeSystem", "id": cs["id"], "url": url, "supplements": codesystem,
             "language": language, "translated": len(translations), "codes_in_codesystem": total,

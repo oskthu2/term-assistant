@@ -1261,8 +1261,29 @@ def project_from_resource(ws: Workspace, resource: dict, title: str, author: str
     if resource["resourceType"] != "ValueSet":
         raise OpError(f"{resource['resourceType']} kan inte tas in som projekt ännu.")
     includes = [i for i in resource.get("compose", {}).get("include", []) if i.get("system")]
-    if any(i.get("filter") or not i.get("concept") for i in includes):
-        raise OpError("Bara urval med uttryckligen listade koder kan tas in.")
+    notes = [f"Taget in från förslaget {origin} (AI-stött) – granska urvalet innan release."]
+    filtered = [i for i in includes if i.get("filter") or not i.get("concept")]
+    if filtered:
+        # Urval definierade med t.ex. ECL tas in som kodlista ur förslagets expansion (ögonblicksbild).
+        expansion = resource.get("expansion") or {}
+        contains = expansion.get("contains") or []
+        if not contains or (expansion.get("total") is not None and expansion["total"] > len(contains)):
+            raise OpError("Urvalet definieras med ett filter (t.ex. ECL) och förslaget saknar en fullständig "
+                          "expansion. Bara urval med listade koder, eller med expansionen sparad, kan tas in.")
+        listed = {(i["system"], c["code"]) for i in includes for c in i.get("concept", [])}
+        by_system: dict[str, list[dict]] = {}
+        for c in contains:
+            if c.get("system") and (c["system"], c["code"]) not in listed:
+                by_system.setdefault(c["system"], []).append({"code": c["code"], "display": c.get("display")})
+        includes = [i for i in includes if i.get("concept") and not i.get("filter")] + \
+            [{"system": system, "concept": concepts} for system, concepts in by_system.items()]
+        rules = "; ".join(f"{f.get('property')} {f.get('op')} {f.get('value')}" for i in filtered
+                          for f in i.get("filter", [])) or "hela kodsystemet"
+        used = ", ".join(p.get("valueUri", "") for p in expansion.get("parameter", [])
+                         if p.get("name") == "used-codesystem")
+        notes.append(f"Förslaget definierar urvalet med {rules}. Det är taget in som kodlista ur expansionen "
+                     f"({len(contains)} koder{', ' + used if used else ''}, {expansion.get('timestamp', 'okänd tid')}). "
+                     "Kontrollera urvalet igen när en ny version av kodsystemet släpps.")
     systems = {i["system"]: resolve_system_name(i["system"])[0] for i in includes}
     columns = [ColumnMapping(source_column=h, role=role, rationale="Förslag från terminologitjänsten",
                              ui=UiHints(label=h, order=n))
@@ -1277,8 +1298,8 @@ def project_from_resource(ws: Workspace, resource: dict, title: str, author: str
         tpl.codesystem.publisher = tpl.codesystem.publisher or namespace.publisher
     tpl.classification = classification
     tpl.source.file = origin
-    project = Project(id=ws.new_id(title), title=title, template=tpl, source_file=origin, questions=[
-        Question(text=f"Taget in från förslaget {origin} (AI-stött) – granska urvalet innan release.")])
+    project = Project(id=ws.new_id(title), title=title, template=tpl, source_file=origin,
+                      questions=[Question(text=n) for n in notes])
     ws.save(project, {"Urval": SheetData(headers=["Kod", "Benämning", "Kodsystem"], rows=rows)}, author=author,
             action="Urval taget in från förslag", detail={"ursprung": origin, "rader": len(rows)})
     return project

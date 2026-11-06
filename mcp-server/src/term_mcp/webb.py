@@ -115,6 +115,7 @@ def create_app(tx_url: str | None = None, allow_write: bool = True,
     from starlette.routing import Route
 
     tx_url = (tx_url or os.environ.get("TX_BASE_URL") or LOCAL_TX).rstrip("/")
+    proposal_url = (os.environ.get("TX_PROPOSAL_URL") or "").rstrip("/") or tx_url  # där förslagen skrivs
     admin_url = (admin_url or os.environ.get("TERM_ADMIN_URL") or port_url(8000)).rstrip("/")
     conversations: dict[str, Conversation] = {}
 
@@ -125,7 +126,7 @@ def create_app(tx_url: str | None = None, allow_write: bool = True,
         return FileResponse(STATIC / "webb.html")
 
     async def config(request: Request):
-        return JSONResponse({"tx": tx_url, "admin": admin_url, "examples": EXAMPLES, "writeAllowed": allow_write,
+        return JSONResponse({"tx": tx_url, "proposalTx": proposal_url, "admin": admin_url, "examples": EXAMPLES, "writeAllowed": allow_write,
                              "apiKey": bool(os.environ.get("ANTHROPIC_API_KEY")) or anthropic_factory is not None})
 
     async def new_conversation(request: Request):
@@ -191,13 +192,16 @@ def create_app(tx_url: str | None = None, allow_write: bool = True,
             return JSONResponse({"error": _friendly(exc)}, status_code=502)
 
     async def resource(request: Request):
-        """Visa en resurs på terminologitjänsten som JSON (fungerar även via Codespaces portvidarebefordran)."""
+        """Visa ett förslag på förslagsservern som JSON (fungerar även via Codespaces portvidarebefordran)."""
         import httpx2
         rtype, rid = request.path_params["rtype"], request.path_params["rid"]
         if rtype not in ("CodeSystem", "ValueSet", "ConceptMap"):
             return JSONResponse({"error": "okänd resurstyp"}, status_code=400)
         async with httpx2.AsyncClient(timeout=30) as http:
-            r = await http.get(f"{tx_url}/{rtype}/{rid}", headers={"Accept": "application/fhir+json"})
+            headers = {"Accept": "application/fhir+json"}
+            if proposal_url != tx_url and os.environ.get("TX_PROPOSAL_TOKEN"):
+                headers["Authorization"] = f"Bearer {os.environ['TX_PROPOSAL_TOKEN']}"
+            r = await http.get(f"{proposal_url}/{rtype}/{rid}", headers=headers)
         return JSONResponse(r.json(), status_code=r.status_code)
 
     @contextlib.asynccontextmanager
