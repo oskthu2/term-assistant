@@ -55,9 +55,18 @@ servrar stöder sökparametrar olika (tx.fhir.org ignorerar t.ex. `title:contain
 `ValueSet/$validate-code` utan `system` misslyckas på HAPI. Verktyget hämtar då
 systemet ur expansionen och försöker igen.
 
-**Skrivverktyg** (`create_valueset`, `upsert_resource`) registreras bara med
-`TX_ALLOW_WRITE=1`. Modellen ser dem alltså inte mot en produktionstjänst.
-`create_valueset` validerar varje kod först, och okända koder stoppar skapandet.
+**Förslag i stället för skrivning.** MCP-servern kan inte ändra granskat innehåll. Med
+`TX_ALLOW_WRITE=1` kan den skapa förslag, och det är det enda den skriver:
+
+* **urval** (`propose_valueset`)
+* **mappningar** (`propose_conceptmap`)
+* **översättningar** (`propose_translation`), som CodeSystem-supplement
+
+Varje förslag är ett utkast (`draft`, `experimental`) med taggen
+`urn:term-assistant:arbetsflode#forslag`. Alla koder kontrolleras med `$validate-code` innan
+något skrivs. Ett förslag får aldrig ta ett id eller en URL som en granskad resurs har. Bara
+utkast med taggen räknas som förslag, så en släppt resurs är skyddad även om en server behållit
+taggen.
 
 **Fel** från terminologitjänsten blir verktygsfel med serverns meddelande
 (`ToolError`). MCP-SDK:n döljer annars texten i oväntade undantag, och då kan modellen
@@ -69,6 +78,35 @@ SDK:ns tool runner och MCP-hjälparna (`async_mcp_tool`). Hela dialogen, med
 verktygsanrop och verktygssvar, sparas mellan instruktionerna. Därför kan man fråga
 vidare ("och vad betyder den andra koden?"). `--verktyg` och `--anropa` fungerar utan
 API-nyckel.
+
+## Förslag, granskning och mappningar
+
+Arbetsfördelningen mellan komponenterna följer den redaktionella kedjan:
+
+```
+ instruktion ─► MCP-servern ─► förslag (utkast, taggat) på terminologitjänsten
+                                   │
+ Administrationsverktyget ◄────────┘  "Ta in som projekt"
+   rätta, kontrollera mot tjänsten, redaktionell kedja, fyra ögon
+   └─► release ─► publicera till terminologitjänsten (ersätter förslaget) eller paketkatalogen
+```
+
+* **AI:n föreslår, människan beslutar.** Förslagen bär utgivaren "Förslag från term-mcp (AI-stött,
+  ej granskat)" och en motivering. Allt som släpps har gått genom administrationsverktyget.
+* **Samma id ersätter förslaget.** Projektet behåller förslagets namn och URL. När releasen
+  publiceras ersätter den därför förslaget i stället för att lägga en andra resurs med samma URL.
+  HAPI behåller taggar när en resurs uppdateras, så verktyget tar bort förslagstaggen med
+  `$meta-delete`. Det upptäcktes i testet mot HAPI.
+* **Mappningsprojekt** (`kind = conceptmap`) har en rad per mappning, där radnumret är nyckel
+  eftersom en källkod kan ha flera mål. Kodfälten söker i käll- respektive målkodsystemet via
+  `$expand` med filter. Relationerna anges på svenska och översätts till R4 `equivalence` eller R5
+  `relationship`/`noMap`. Kravet i R4 på kommentar för smalare och inexakta mappningar stoppar
+  releasekandidaten.
+* **Översättningar** granskas än så länge bara på terminologitjänsten. Administrationsverktyget
+  visar dem men tar inte in dem som projekt. Ett projekt för supplement är nästa steg.
+* **Webbgränssnittet** (`term-mcp-webb`) är gjort för demo. Varje samtal har en egen
+  MCP-underprocess och en egen dialog, stegen strömmas med Server-Sent Events, och Claudes
+  markdown renderas på servern med HTML i texten neutraliserad.
 
 ## Paketbyggaren (`paketbyggare/`)
 

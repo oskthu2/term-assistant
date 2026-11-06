@@ -53,20 +53,21 @@ done
 
 cat <<'MSG'
 
-Klart! Tre fristående komponenter:
+Klart! Tre fristående komponenter och en mockad terminologitjänst:
 
-  Inläsningstjänsten (webbapp, port 8000):
-      term-inlasning admin --workspace arbetsyta --host 0.0.0.0 --port 8000
+  1. Mockad terminologitjänst (HAPI, port 8080), grundladdad med paket från tx-nordics:
+       mock-tx/starta.sh
 
-  Mockad terminologitjänst (HAPI, port 8080), grundladdad med paket från tx-nordics:
-      mock-tx/starta.sh
+  2. Terminologiassistenten – instruera MCP-servern i webbläsaren (port 8001, kräver ANTHROPIC_API_KEY):
+       term-mcp-webb --host 0.0.0.0
+     eller i terminalen:  term-mcp-demo --forslag
 
-  MCP-servern via demo-klienten (Claude kräver ANTHROPIC_API_KEY):
-      term-mcp-demo --verktyg
-      term-mcp-demo "Vilka civilstånd finns i HL7 Sveriges värdemängd?"
+  3. Administrationsverktyget (port 8000) – granska förslag, förvalta kodverk, urval och mappningar:
+       TX_PUBLISH=1 term-inlasning admin --workspace arbetsyta --host 0.0.0.0 --port 8000
 
   Paketbyggaren:
-      term-paket bygg paketbyggare/paket/nordiskt-startpaket.json --ut paketbyggare/dist
+       term-paket bygg paketbyggare/paket/nordiskt-startpaket.json --ut paketbyggare/dist
 
-Byt användare (anna/bertil) uppe till höger i webbappen för att prova granskning och fyra ögon.
+Låt portarna vara privata – verktygen har ingen egen inloggning.
+Byt användare (anna/bertil) uppe till höger i administrationsverktyget för granskning och fyra ögon.
 MSG

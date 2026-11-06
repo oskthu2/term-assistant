@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Ny mappning{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Projekt</a> › Ny mappning</div>
+<h1>Ny mappning</h1>
+<p class="muted">En mappning (ConceptMap) från koderna i ett kodsystem eller en värdemängd till ett annat kodsystem.
+Båda måste finnas på terminologitjänsten <span class="mono">{{ tx }}</span>. Mappningen förvaltas som andra projekt:
+redaktionell kedja, kontroll mot terminologitjänsten och releaser.</p>
+<form method="post" class="panel">
+  <label for="title">Namn</label>
+  <input type="text" id="title" name="title" value="{{ form.title or '' }}" placeholder="t.ex. Norska civilstånd till HL7 v3" required>
+  <div class="formgrid">
+    <div><label for="source">Källa – ValueSet eller CodeSystem (canonical URL)</label>
+      <input type="url" id="source" name="source" value="{{ form.source or '' }}" placeholder="http://hl7.no/fhir/ValueSet/no-basis-marital-status" required></div>
+    <div><label for="target">Mål – CodeSystem (canonical URL)</label>
+      <input type="url" id="target" name="target" value="{{ form.target or '' }}" placeholder="http://terminology.hl7.org/CodeSystem/v3-MaritalStatus" required></div>
+    <div><label for="target_valueset">Tillåtna målkoder – ValueSet (valfritt)</label>
+      <input type="url" id="target_valueset" name="target_valueset" value="{{ form.target_valueset or '' }}"></div>
+  </div>
+  <label for="description">Beskrivning <span class="small muted">(krävs före release)</span></label>
+  <textarea id="description" name="description" rows="2" placeholder="Vad mappningen används till och vilka avgränsningar som gäller">{{ form.description or '' }}</textarea>
+  <div class="formgrid">
+    <div><label for="namespace">Namnrymd</label><select id="namespace" name="namespace">
+      {% for ns in settings.namespaces %}<option value="{{ ns.key }}" {{ 'selected' if form.namespace == ns.key }}>{{ ns.label }}</option>{% endfor %}</select></div>
+    <div><label for="classification">Informationsklass</label><select id="classification" name="classification">
+      {% for c in settings.classifications %}<option value="{{ c.key }}" {{ 'selected' if (form.classification or settings.default_classification) == c.key }}>{{ c.label }}</option>{% endfor %}</select></div>
+  </div>
+  <label class="check"><input type="checkbox" name="fill" {{ 'checked' if form.fill or not form }}> Lägg upp en rad per källkod (att fylla i med målkod och relation)</label>
+  <div class="actions"><button type="submit">Skapa mappningsprojekt</button></div>
+</form>
+{% endblock %}

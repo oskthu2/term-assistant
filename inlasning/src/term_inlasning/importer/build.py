@@ -21,6 +21,13 @@ def build_all(template: ImportTemplate, sheets: list[Sheet]) -> tuple[list[dict[
     warnings: list[str] = []
     resources: list[dict[str, Any]] = []
 
+    if template.kind == "conceptmap":
+        from ..config import fhir_version
+        from .conceptmap import build_conceptmap
+        sheet = by_name.get(template.source.sheet) or sheets[0]
+        cm, warnings = build_conceptmap(template, sheet.rows, fhir_version())
+        return [cm], warnings
+
     if template.kind == "valueset":
         from .subset import build_valuesets
         sheet = by_name.get(template.source.sheet) or sheets[0]

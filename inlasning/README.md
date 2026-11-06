@@ -81,6 +81,34 @@ Projekten lagras som JSON i arbetsytan och går att versionshantera med git.
 | `FHIR_VALIDATOR_JAR` | sökväg till HL7:s `validator_cli.jar`; används då vid "Validera paketet" och `term-inlasning validate-package` |
 | `ANTHROPIC_API_KEY` | för AI-granskning (eller `ant auth login`) |
 
+### Mappningar (ConceptMap)
+
+Ett mappningsprojekt har en rad per mappning: källkod, relation, målkod och kommentar. En källkod
+kan ha flera mål.
+
+- **Skapa:** **Ny mappning** utgår från en källa (ValueSet eller CodeSystem) och ett målkodsystem
+  på terminologitjänsten, och lägger upp en rad per källkod. Ett förslag från MCP-servern kan
+  också tas in via **Förslag från terminologitjänsten**.
+- **Redigera:** kodfälten söker i käll- eller målkodsystemet medan du skriver, och den valda
+  kodens text fylls i.
+- **Relationer:** likvärdig, målet är bredare, målet är smalare, närliggande och ingen
+  motsvarighet. De blir `equivalence` i R4 och `relationship`/`noMap` i R5. "Målet är smalare"
+  och "närliggande" kräver kommentar, och saknas den stoppas releasekandidaten.
+- **Kontrollera mappningen:** kontrollerar käll- och målkoder mot terminologitjänsten (okända,
+  inaktiva, avvikande text) och listar källkoder som saknar mappning.
+- **Release:** redaktionell kedja, fyra ögon och paket fungerar som för andra projekt. När en
+  release som ersätter ett förslag publiceras till terminologitjänsten tas förslagstaggen bort.
+
+### Förslag från terminologitjänsten
+
+**Förslag från terminologitjänsten** listar utkast som MCP-servern har skapat, taggade
+`urn:term-assistant:arbetsflode#forslag`:
+
+- **Mappningar och urval** tas in som projekt.
+- **Översättningar** (CodeSystem-supplement) visas, men granskas än så länge på terminologitjänsten.
+
+Publicering till terminologitjänsten kräver `TX_PUBLISH=1`.
+
 ### Terminologitjänst
 
 `TX_BASE_URL` anger vilken terminologitjänst urvalskontrollen och API-publiceringen

@@ -15,14 +15,19 @@ dependencies = [
 
 [project.optional-dependencies]
 demo = ["anthropic[mcp]>=2.1"]
-dev = ["pytest>=8", "anthropic[mcp]>=2.1"]
+webb = ["anthropic[mcp]>=2.1", "starlette>=0.40", "uvicorn>=0.30", "markdown>=3.5"]
+dev = ["pytest>=8", "anthropic[mcp]>=2.1", "starlette>=0.40", "uvicorn>=0.30", "markdown>=3.5"]
 
 [project.scripts]
 term-mcp = "term_mcp.server:main"
 term-mcp-demo = "term_mcp.demo:main"
+term-mcp-webb = "term_mcp.webb:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+term_mcp = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

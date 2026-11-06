@@ -6,7 +6,7 @@ MCP – klienten pratar aldrig själv med terminologitjänsten.
 
     term-mcp-demo "Vilka civilstånd finns i HL7 Sveriges värdemängd?"
     term-mcp-demo                              # dialog, flera instruktioner i rad
-    term-mcp-demo --skriv "Skapa en värdemängd med civilstånden gift och ogift"
+    term-mcp-demo --forslag "Föreslå en mappning från norska civilstånd till HL7 v3 MaritalStatus"
     term-mcp-demo --verktyg                    # lista verktygen (ingen API-nyckel behövs)
     term-mcp-demo --anropa lookup_code '{"system": "...", "code": "M"}'
 
@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, TextIO
+from typing import Any, AsyncIterator, Awaitable, Callable, TextIO
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -36,16 +37,24 @@ Du är en terminologiassistent. Du arbetar mot en FHIR-terminologitjänst enbart
 genom de verktyg du har fått. Hitta aldrig på koder, URL:er eller displaytexter:
 slå upp, sök eller validera dem med verktygen och säg tydligt när något inte
 finns på tjänsten. Börja med att hitta rätt kodsystem eller värdemängd (canonical
-URL) innan du slår upp enskilda koder. Om du skapar eller ändrar något på
-tjänsten, säg exakt vad (canonical URL, version, antal koder). Svara på svenska,
-kort och sakligt, gärna med en tabell när du listar koder."""
+URL) innan du slår upp enskilda koder.
+
+Förslag (urval, mappningar, översättningar) bygger du på kodernas egna texter och
+definitioner som du hämtat med verktygen. Redovisa förslaget som en tabell innan
+du skapar det, motivera relationer som inte är likvärdiga och peka ut koder som
+saknar motsvarighet. Förslag får canonical URL:er under http://example.org/fhir/
+om användaren inte anger något annat. Säg exakt vad som skapades (canonical URL,
+antal koder) och att det granskas i administrationsverktyget innan det släpps.
+Svara på svenska, kort och sakligt, gärna med en tabell när du listar koder."""
 
 EXAMPLES = [
-    "Vilka svenska kodsystem och värdemängder finns på tjänsten?",
-    "Lista civilstånden i HL7 Sveriges värdemängd för civilstånd, med svensk text.",
-    "Är koden 'M' giltig i HL7 Sveriges värdemängd för civilstånd? Vad betyder den?",
+    "Vilka svenska och norska kodsystem och värdemängder finns på tjänsten?",
+    "Lista civilstånden i HL7 Sveriges värdemängd för civilstånd, med svensk text där den finns.",
     "Översätt SNOMED CT-koden 44054006 till ICD-10 med hjälp av en ConceptMap på tjänsten.",
-    "Skapa en värdemängd http://example.org/fhir/ValueSet/demo-civilstand med gift och ogift (kräver --skriv).",
+    "Föreslå en mappning från norska civilstånd (no-basis-marital-status) till HL7 v3 MaritalStatus. "
+    "Visa tabellen först och skapa förslaget när jag säger till.",
+    "Föreslå en svensk översättning av de norska familjerelationerna (no-basis-family-relation).",
+    "Föreslå ett urval av civilstånd för ett vårdregister: gift, ogift, skild och änka/änkling.",
 ]
 
 
@@ -83,10 +92,13 @@ def _result_text(result: dict) -> str:
 
 
 class Session:
-    """En dialog med Claude över MCP-serverns verktyg. Historiken sparas mellan instruktionerna."""
+    """En dialog med Claude över MCP-serverns verktyg. Historiken sparas mellan instruktionerna.
+
+    Varje steg rapporteras som en händelse till ``on_event(typ, data)``: ``text``, ``tool_use``,
+    ``tool_result`` och ``done``. Utan ``on_event`` skrivs stegen ut (terminalläget)."""
 
     def __init__(self, mcp_session: ClientSession, anthropic_client=None, model: str = MODEL,
-                 out: TextIO = sys.stdout):
+                 out: TextIO = sys.stdout, on_event: Callable[[str, dict], Awaitable[None] | None] | None = None):
         if anthropic_client is None:
             from anthropic import AsyncAnthropic
             anthropic_client = AsyncAnthropic()
@@ -94,8 +106,25 @@ class Session:
         self.client = anthropic_client
         self.model = model
         self.out = out
+        self.on_event = on_event or self._print
         self.history: list[dict] = []
         self._tools = None
+
+    def _print(self, kind: str, data: dict) -> None:
+        if kind == "text":
+            print(data["text"], file=self.out)
+        elif kind == "tool_use":
+            args = ", ".join(f"{k}={_short(v, 60)}" for k, v in data["input"].items())
+            print(f"  → {data['name']}({args})", file=self.out)
+        elif kind == "tool_result":
+            print(f"    {'✗' if data['is_error'] else '←'} {_short(data['text'])}", file=self.out)
+        elif kind == "done" and data.get("note"):
+            print(f"({data['note']})", file=self.out)
+
+    async def _emit(self, kind: str, data: dict) -> None:
+        result = self.on_event(kind, data)
+        if inspect.isawaitable(result):
+            await result
 
     async def tools(self):
         if self._tools is None:
@@ -103,6 +132,9 @@ class Session:
             listed = await self.mcp.list_tools()
             self._tools = [async_mcp_tool(t, self.mcp) for t in listed.tools]
         return self._tools
+
+    def reset(self) -> None:
+        self.history = []
 
     async def ask(self, instruction: str) -> str:
         """Kör en instruktion till slut och returnera Claudes svar."""
@@ -123,26 +155,30 @@ class Session:
         async for message in runner:
             final = message
             messages.append(message.to_param())
+            names = {}
             for block in message.content:
                 if block.type == "text" and block.text.strip():
-                    print(block.text, file=self.out)
+                    await self._emit("text", {"text": block.text})
                 elif block.type == "tool_use":
-                    args = ", ".join(f"{k}={_short(v, 60)}" for k, v in block.input.items())
-                    print(f"  → {block.name}({args})", file=self.out)
+                    names[block.id] = block.name
+                    await self._emit("tool_use", {"id": block.id, "name": block.name, "input": block.input})
             response = await runner.generate_tool_call_response()  # cachas; runnern kör inte verktygen igen
             if response is not None:
                 messages.append(response)
                 for result in response["content"]:
-                    mark = "✗" if result.get("is_error") else "←"
-                    print(f"    {mark} {_short(_result_text(result))}", file=self.out)
-        if final is None:
-            return ""
-        if final.stop_reason == "refusal":
-            print("(Claude avböjde instruktionen.)", file=self.out)
-        elif final.stop_reason == "max_tokens":
-            print("(Svaret blev avkortat – be om en kortare sammanfattning.)", file=self.out)
+                    await self._emit("tool_result", {"id": result.get("tool_use_id"),
+                                                     "name": names.get(result.get("tool_use_id")),
+                                                     "is_error": bool(result.get("is_error")),
+                                                     "text": _result_text(result)})
+        answer = "".join(b.text for b in final.content if b.type == "text") if final else ""
+        note = None
+        if final is not None and final.stop_reason == "refusal":
+            note = "Claude avböjde instruktionen."
+        elif final is not None and final.stop_reason == "max_tokens":
+            note = "Svaret blev avkortat – be om en kortare sammanfattning."
         self.history = messages
-        return "".join(b.text for b in final.content if b.type == "text")
+        await self._emit("done", {"answer": answer, "note": note})
+        return answer
 
 
 async def list_tools(params: StdioServerParameters, out: TextIO = sys.stdout) -> list[str]:
@@ -190,7 +226,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("instruction", nargs="?", help="Instruktion; utan instruktion startar en dialog")
     parser.add_argument("--tx", default=os.environ.get("TX_BASE_URL") or LOCAL_TX,
                         help=f"Terminologitjänstens FHIR-bas (standard TX_BASE_URL eller {LOCAL_TX})")
-    parser.add_argument("--skriv", action="store_true", help="Tillåt skrivverktygen (bara mot en testserver)")
+    parser.add_argument("--forslag", "--skriv", dest="skriv", action="store_true",
+                        help="Tillåt förslagsverktygen: urval, mappningar och översättningar (bara mot en testserver)")
     parser.add_argument("--verktyg", action="store_true", help="Lista MCP-serverns verktyg och avsluta")
     parser.add_argument("--anropa", nargs="+", metavar=("VERKTYG", "JSON"),
                         help="Anropa ett verktyg direkt med argument som JSON, utan Claude")

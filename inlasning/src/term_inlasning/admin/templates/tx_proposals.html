@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Förslag från terminologitjänsten{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Projekt</a> › Förslag från terminologitjänsten</div>
+<h1>Förslag från terminologitjänsten</h1>
+<p class="muted">Urval, mappningar och översättningar som MCP-servern (AI-stött) har skapat som utkast på
+<span class="mono">{{ tx }}</span>. Ta in ett förslag som projekt för att granska det, rätta det och släppa det
+genom den vanliga redaktionella kedjan. Förslaget på terminologitjänsten ändras inte.</p>
+{% if error %}<div class="errors">{{ error }}</div>{% endif %}
+{% if not proposals and not error %}<div class="panel">Inga förslag just nu.</div>{% endif %}
+{% if proposals %}
+<table>
+  <tr><th>Typ</th><th>Förslag</th><th>Innehåll</th><th>Skapat</th><th></th></tr>
+  {% for r in proposals %}
+  {% set origin = r.resourceType ~ '/' ~ r.id ~ ' (' ~ r.url ~ '|' ~ (r.version or '-') ~ ')' %}
+  <tr>
+    <td>{{ {'ConceptMap': 'Mappning', 'ValueSet': 'Urval', 'CodeSystem': 'Översättning'}.get(r.resourceType, r.resourceType) }}</td>
+    <td><b>{{ r.title or r.name or r.id }}</b><div class="mono small muted">{{ r.url }}</div>
+      {% if r.description %}<div class="small">{{ r.description }}</div>{% endif %}</td>
+    <td class="small">{% if r.resourceType == 'CodeSystem' %}{{ r.language }} · översätter <span class="mono">{{ r.supplements }}</span>{% elif r.resourceType == 'ConceptMap' %}{% for g in r.group or [] %}<span class="mono">{{ g.source }}</span> → <span class="mono">{{ g.target }}</span>{% endfor %}{% endif %}</td>
+    <td class="small muted">{{ r.date or '' }}</td>
+    <td>
+      {% if r.resourceType == 'CodeSystem' %}<span class="small muted">Översättningar granskas på terminologitjänsten</span>
+      {% elif origin in taken %}<span class="badge ok">taget in</span>
+      {% else %}
+      <form method="post" action="/tx-forslag/ta-in" class="inline">
+        <input type="hidden" name="type" value="{{ r.resourceType }}"><input type="hidden" name="id" value="{{ r.id }}">
+        <select name="namespace" aria-label="Namnrymd">{% for ns in settings.namespaces %}<option value="{{ ns.key }}">{{ ns.label }}</option>{% endfor %}</select>
+        <button type="submit">Ta in som projekt</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

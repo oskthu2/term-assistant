@@ -17,9 +17,9 @@
   <ul class="plain small">{% for r in preview %}<li>{{ r.resourceType }} <span class="mono">{{ r.name }}</span> –
     {{ code_count(r) }} {{ 'mappningar' if r.resourceType == 'ConceptMap' else 'koder' }}</li>{% endfor %}</ul>
   {% if warnings %}<h3>Varningar</h3><ul class="small">{% for w in warnings[:30] %}<li class="diff-chg">{{ w }}</li>{% endfor %}</ul>{% endif %}
-  {% if project.template.kind == 'valueset' %}
+  {% if project.template.kind in ('valueset', 'conceptmap') %}
   <form method="post" action="/p/{{ project.id }}/check" class="actions">
-    <button type="submit" class="secondary">Kontrollera urvalet (flaggar koder som behöver hanteras)</button></form>
+    <button type="submit" class="secondary">{{ 'Kontrollera mappningen' if project.template.kind == 'conceptmap' else 'Kontrollera urvalet' }} (flaggar koder som behöver hanteras)</button></form>
   {% endif %}
   {% if open_proposals %}<p class="small diff-chg">{{ open_proposals }} förslag väntar på granskning.</p>{% endif %}
 </div>

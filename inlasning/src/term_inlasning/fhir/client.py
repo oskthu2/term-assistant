@@ -188,6 +188,21 @@ class TerminologyClient:
         params = {"url": conceptmap, "system": system, "code": code, "targetsystem": target_system}
         return parameters_to_dict(await self._request("GET", "ConceptMap/$translate", params=params))
 
+    async def delete_tag(self, resource_type: str, rid: str, tag: dict[str, str]) -> None:
+        """Ta bort en tagg från resursen ($meta-delete)."""
+        body = {"resourceType": "Parameters", "parameter": [
+            {"name": "meta", "valueMeta": {"tag": [{"system": tag["system"], "code": tag["code"]}]}}]}
+        await self._request("POST", f"{resource_type}/{rid}/$meta-delete", json=body)
+
+    async def read(self, resource_type: str, rid: str) -> dict[str, Any] | None:
+        """Läs en resurs på id; None om den inte finns."""
+        response = await self._http.get(f"{resource_type}/{rid}")
+        if response.status_code in (404, 410):
+            return None
+        if response.status_code >= 400:
+            raise TerminologyError(f"{response.status_code} {resource_type}/{rid}: {response.text[:300]}")
+        return response.json()
+
     async def put_resource(self, resource: dict[str, Any]) -> dict[str, Any]:
         """Skapa/uppdatera en resurs (används vid publicering av releaser)."""
         rtype, rid = resource["resourceType"], resource.get("id")

@@ -1,9 +1,10 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Nytt begrepp' if is_new else row.get(tpl.columns[0].source_column) }}{% endblock %}
+{% block title %}{{ ('Ny mappning' if tpl.kind == 'conceptmap' else 'Nytt begrepp') if is_new else row.get(tpl.columns[0].source_column) }}{% endblock %}
 {% block content %}
+{% set new_label = 'Ny mappning' if tpl.kind == 'conceptmap' else 'Nytt begrepp' %}
 <div class="crumbs"><a href="/">Projekt</a> › <a href="/p/{{ project.id }}">{{ project.title }}</a> › <a href="/p/{{ project.id }}/s/{{ quote(sheet) }}">{{ sheet }}</a></div>
 {% set code_col = (tpl.columns | selectattr('role', 'equalto', ColumnRole.CODE) | first).source_column %}
-<h1>{{ 'Nytt begrepp' if is_new else row.get(code_col) }}
+<h1>{{ new_label if is_new else row.get(code_col) }}
   {% if released %}<span class="badge">finns i senaste release</span>{% endif %}</h1>
 <form method="post" class="panel">
   {% set ns = namespace(group=none) %}
@@ -24,6 +25,14 @@
         <select id="c{{ i }}" name="c{{ i }}" {{ 'disabled' if locked }}><option value=""></option>
           {% for o in c.ui.options %}<option {{ 'selected' if (v|string) == o }}>{{ o }}</option>{% endfor %}
           {% if v and (v|string) not in c.ui.options %}<option selected>{{ v }}</option>{% endif %}</select>
+      {% elif w == 'code-search' %}
+        {% set side = 'kalla' if c.role == ColumnRole.MAP_SOURCE else 'mal' %}
+        {% set disp_role = ColumnRole.MAP_SOURCE_DISPLAY if side == 'kalla' else ColumnRole.MAP_TARGET_DISPLAY %}
+        {% set disp_i = (columns | selectattr('1.role', 'equalto', disp_role) | map(attribute='0') | first) %}
+        <input type="text" id="c{{ i }}" name="c{{ i }}" value="{{ v or '' }}" list="sok-c{{ i }}" autocomplete="off"
+               data-sok="{{ side }}" data-display="{{ 'c' ~ disp_i if disp_i is not none else '' }}" {{ 'readonly' if locked }}
+               placeholder="Sök på kod eller text i {{ tpl.mapping.target_system if side == 'mal' else tpl.mapping.source_system }}">
+        <datalist id="sok-c{{ i }}"></datalist>
       {% elif w == 'concept-picker' %}
         <input type="text" id="c{{ i }}" name="c{{ i }}" value="{{ v or '' }}" list="codes" {{ 'readonly' if locked }}>
       {% else %}
@@ -48,7 +57,7 @@
   <h3>Behöver hanteras: <span class="badge bad">{{ flag.status }}</span></h3>
   <p class="small">{{ flag.message }}{% if flag.server_display %} · namn i kodsystemet: {{ flag.server_display }}{% endif %}
     <span class="muted">(kontrollerad {{ flag.checked[:16].replace('T', ' ') }})</span></p>
-  {% for s in flag.suggestions %}
+  {% if tpl.kind != 'conceptmap' %}{% for s in flag.suggestions %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/replace" class="actions">
     <input type="hidden" name="new_code" value="{{ s.code }}"><input type="hidden" name="display" value="{{ s.display or '' }}">
     <input type="hidden" name="source" value="{{ s.source }}">
@@ -59,7 +68,7 @@
     <input type="text" name="new_code" placeholder="Annan kod" style="max-width:200px" required>
     <input type="hidden" name="source" value="manuellt">
     <button type="submit" class="secondary">Ersätt med angiven kod</button>
-  </form>
+  </form>{% endif %}
 </div>
 {% endif %}
 {% if proposals %}
@@ -90,11 +99,34 @@
 </div>
 {% elif not is_new %}
 <div class="panel">
-  <h3>Ta bort ur urvalet</h3>
+  <h3>{{ 'Ta bort mappningen' if tpl.kind == 'conceptmap' else 'Ta bort ur urvalet' }}</h3>
   {% if deletable %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/c/{{ quote(row.get(code_col)|string) }}/delete" class="inline"
-        onsubmit="return confirm('Ta bort koden ur urvalet?')"><button type="submit" class="danger">Ta bort</button></form>
+        onsubmit="return confirm('Ta bort?')"><button type="submit" class="danger">Ta bort</button></form>
   {% else %}<p class="small muted">{{ delete_reason }}</p>{% endif %}
 </div>
+{% endif %}
+{% if tpl.kind == 'conceptmap' %}
+<script>
+// Kodsökning i käll-/målkodsystemet via terminologitjänsten; vald kod fyller i texten.
+for (const input of document.querySelectorAll('input[data-sok]')) {
+  const list = document.getElementById(input.getAttribute('list'));
+  let timer = null, hits = [];
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const hit = hits.find(h => h.code === input.value);
+    if (hit && input.dataset.display) { const d = document.getElementById(input.dataset.display); if (d) d.value = hit.display || ''; }
+    timer = setTimeout(async () => {
+      const q = input.value.trim();
+      if (q.length < 1) return;
+      const r = await fetch(`/p/{{ project.id }}/sok?sida=${input.dataset.sok}&q=${encodeURIComponent(q)}`);
+      if (!r.ok) return;
+      hits = await r.json();
+      list.innerHTML = '';
+      for (const h of hits) { const o = document.createElement('option'); o.value = h.code; o.label = h.display || ''; list.append(o); }
+    }, 250);
+  });
+}
+</script>
 {% endif %}
 {% endblock %}

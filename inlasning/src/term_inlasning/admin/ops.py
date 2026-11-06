@@ -27,7 +27,7 @@ from ..importer.mapping import (
     PropertyDefinition,
     UiHints,
 )
-from ..importer import lifecycle, metadata
+from ..importer import conceptmap, lifecycle, metadata
 from ..importer.registry import PropertyRegistry
 from ..importer.package import build_package, label_resources, package_manifest
 from ..importer.release import bump, check_policy, diff, release as to_release
@@ -55,12 +55,19 @@ ROLE_LABELS = {
     ColumnRole.RULE: "Urvalsregel (exakt, underordnade, ECL)",
     ColumnRole.COMMENT: "Kommentar/källa",
     ColumnRole.LIFECYCLE: "Livscykel och förvaltning",
+    ColumnRole.MAP_SOURCE: "Källkod",
+    ColumnRole.MAP_SOURCE_DISPLAY: "Källkodens text",
+    ColumnRole.MAP_TARGET: "Målkod",
+    ColumnRole.MAP_TARGET_DISPLAY: "Målkodens text",
+    ColumnRole.MAP_RELATION: "Relation (ConceptMap)",
     ColumnRole.IGNORE: "Ignoreras",
 }
 CS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.DEFINITION, ColumnRole.DESIGNATION, ColumnRole.PROPERTY,
             ColumnRole.PARENT, ColumnRole.CONTEXT, ColumnRole.DERIVED, ColumnRole.LIFECYCLE, ColumnRole.IGNORE]
 VS_ROLES = [ColumnRole.CODE, ColumnRole.DISPLAY, ColumnRole.SYSTEM, ColumnRole.SYSTEM_VERSION, ColumnRole.INCLUDE,
             ColumnRole.RULE, ColumnRole.COMMENT, ColumnRole.GROUP, ColumnRole.LIFECYCLE, ColumnRole.IGNORE]
+MAP_ROLES = [ColumnRole.CODE, ColumnRole.MAP_SOURCE, ColumnRole.MAP_SOURCE_DISPLAY, ColumnRole.MAP_RELATION,
+             ColumnRole.MAP_TARGET, ColumnRole.MAP_TARGET_DISPLAY, ColumnRole.COMMENT, ColumnRole.IGNORE]
 PROPERTY_TYPES = ["string", "code", "boolean", "integer", "decimal", "dateTime", "Coding"]
 _CODE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_\-]*$")
 
@@ -219,6 +226,13 @@ def update_row(tpl: ImportTemplate, data: SheetData, row: dict, form: dict, is_n
         new_values[col.source_column] = value
 
     code = new_values.get(code_col, row.get(code_col))
+    if tpl.kind == "conceptmap":
+        if not code:  # mappningsrader har löpnummer, inte egna koder
+            code = new_values[code_col] = conceptmap.next_row_id(data.rows, tpl)
+        errors += conceptmap.row_problems(tpl, {**row, **new_values})
+        source_col = tpl.column(ColumnRole.MAP_SOURCE).source_column
+        if not (new_values.get(source_col) or row.get(source_col)):
+            errors.append("Källkoden måste anges.")
     if not code:
         errors.append("Koden måste anges.")
     elif tpl.kind == "codesystem" and not re.fullmatch(r"\S+", str(code)):
@@ -262,7 +276,7 @@ def _stamp(tpl: ImportTemplate, row: dict, changes: dict, is_new: bool) -> None:
 
 
 def roles_for(tpl: ImportTemplate) -> list[ColumnRole]:
-    return VS_ROLES if tpl.kind == "valueset" else CS_ROLES
+    return {"valueset": VS_ROLES, "conceptmap": MAP_ROLES}.get(tpl.kind, CS_ROLES)
 
 
 def property_choices(tpl: ImportTemplate, registry: PropertyRegistry) -> list[PropertyDefinition]:
@@ -731,8 +745,10 @@ def resource_codes(resource: dict) -> list[str]:
         return [f"{inc['system']}|{c['code']}" for inc in resource.get("compose", {}).get("include", [])
                 for c in inc.get("concept", [])]
     if resource.get("resourceType") == "ConceptMap":
-        return [f"{e['code']}→{t['code']}" for g in resource.get("group", []) for e in g.get("element", [])
-                for t in e.get("target", [])]
+        return [f"{e['code']}→{t.get('code', '∅')} ({t.get('equivalence') or t.get('relationship')})"
+                for g in resource.get("group", []) for e in g.get("element", []) for t in e.get("target", [])] + \
+               [f"{e['code']}→∅ (noMap)" for g in resource.get("group", []) for e in g.get("element", [])
+                if e.get("noMap")]
     out = []
 
     def walk(concepts):
@@ -836,6 +852,11 @@ def create_release_candidate(ws: Workspace, project: Project, data: dict[str, Sh
     prev_by_url = {r["url"]: r for r in previous.resources} if previous else {}
     diffs, errors = [], []
     errors += namespace_errors(project, resources, settings)
+    if project.template.kind == "conceptmap":  # i R4 krävs kommentar för smalare/inexakta mappningar
+        code_col = code_column(project.template)
+        for rows in data.values():
+            for row in rows.rows:
+                errors += [f"Mappning {row.get(code_col)}: {p}" for p in conceptmap.row_problems(project.template, row)]
     meta_errors, meta_warnings = metadata.release_errors(project.template, settings.release_required_metadata)
     errors += meta_errors
     warnings += meta_warnings
@@ -1001,8 +1022,12 @@ async def publish_release(ws: Workspace, project: Project, version: str, target_
         resources = label_resources(rel.resources, settings.security_label(project.template.classification))
         for r in resources:
             try:
-                await client.put_resource(r)
+                stored = await client.put_resource(r)
                 log.append(f"OK {r['resourceType']}/{r.get('id')} {r['url']}|{r['version']}")
+                # Ersätter releasen ett förslag (samma id) behåller vissa servrar (t.ex. HAPI) förslagets tagg.
+                if any(t.get("system") == PROPOSAL_TAG["system"] for t in (stored or {}).get("meta", {}).get("tag", [])):
+                    await client.delete_tag(r["resourceType"], r["id"], PROPOSAL_TAG)
+                    log.append(f"OK förslagstaggen borttagen från {r['resourceType']}/{r.get('id')}")
             except Exception as exc:  # visas för användaren
                 log.append(f"FEL {r['resourceType']}/{r.get('id')}: {exc}")
     rel.publish_log = rel.publish_log + [f"{now()} {target.label}:"] + log
@@ -1036,6 +1061,144 @@ def _local_codesystems(ws: Workspace) -> dict[str, dict[str, dict]]:
                                        "replacedBy": replaced}
             out[r["url"]] = concepts
     return out
+
+
+# -- mappningar (ConceptMap-projekt) ----------------------------------------------------------------
+
+# Taggen som MCP-serverns förslag bär (en konvention mellan komponenterna, ingen delad kod).
+PROPOSAL_TAG = {"system": "urn:term-assistant:arbetsflode", "code": "forslag"}
+
+
+def create_mapping_project(ws: Workspace, title: str, meta, spec, rows: list[dict], author: str,
+                           namespace: Namespace | None = None, classification: str | None = None,
+                           questions: list[str] | None = None, source: str | None = None) -> Project:
+    tpl = conceptmap.template(meta, spec)
+    if namespace:
+        tpl.namespace = namespace.key
+        tpl.codesystem.publisher = tpl.codesystem.publisher or namespace.publisher
+    tpl.classification = classification
+    data = {conceptmap.SHEET: SheetData(headers=[c.source_column for c in tpl.columns], rows=rows)}
+    tpl.source.file = source
+    project = Project(id=ws.new_id(title), title=title, template=tpl, source_file=source,
+                      questions=[Question(text=q) for q in questions or []])
+    ws.save(project, data, author=author, action="Mappningsprojekt skapat",
+            detail={"källa": spec.source_system, "mål": spec.target_system, "rader": len(rows),
+                    "ursprung": spec.origin})
+    return project
+
+
+def source_rows(tpl: ImportTemplate, codes: list[dict]) -> list[dict]:
+    """En tom mappningsrad per källkod ({code, display}), att fylla i med målkod och relation."""
+    cols = {r: tpl.column(r).source_column for r in (ColumnRole.CODE, ColumnRole.MAP_SOURCE,
+                                                       ColumnRole.MAP_SOURCE_DISPLAY)}
+    return [{cols[ColumnRole.CODE]: f"M{i}", cols[ColumnRole.MAP_SOURCE]: c["code"],
+             cols[ColumnRole.MAP_SOURCE_DISPLAY]: c.get("display")} for i, c in enumerate(codes, start=1)]
+
+
+async def check_mapping(project: Project, data: dict[str, SheetData], client) -> dict:
+    """Kontrollera käll- och målkoder mot terminologitjänsten; flagga okända och inaktiva koder och
+    rapportera källkoder i källvärdemängden som saknar mappning."""
+    import asyncio
+    tpl, spec = project.template, project.template.mapping
+    if tpl.kind != "conceptmap":
+        raise OpError("Kontrollen gäller mappningsprojekt.")
+    sheet = next(iter(data))
+    col = {r: tpl.column(r).source_column for r in (ColumnRole.CODE, ColumnRole.MAP_SOURCE, ColumnRole.MAP_TARGET,
+                                                      ColumnRole.MAP_SOURCE_DISPLAY, ColumnRole.MAP_TARGET_DISPLAY)}
+    sem = asyncio.Semaphore(8)
+
+    async def check(system: str, code: str):
+        async with sem:
+            try:
+                return await client.validate_code(code, system=system)
+            except Exception as exc:  # noqa: BLE001 – rapporteras som fel på raden
+                return {"result": False, "message": str(exc)}
+
+    pairs = {(spec.source_system, str(r[col[ColumnRole.MAP_SOURCE]])) for r in data[sheet].rows
+             if r.get(col[ColumnRole.MAP_SOURCE])}
+    pairs |= {(spec.target_system, str(r[col[ColumnRole.MAP_TARGET]])) for r in data[sheet].rows
+              if r.get(col[ColumnRole.MAP_TARGET])}
+    results = dict(zip(pairs, await asyncio.gather(*(check(s, c) for s, c in pairs))))
+    flags: dict[str, Flag] = {}
+    for r in data[sheet].rows:
+        notes, display = [], None
+        for side, system, code_col, display_col in (("källkoden", spec.source_system, col[ColumnRole.MAP_SOURCE],
+                                                     col[ColumnRole.MAP_SOURCE_DISPLAY]),
+                                                    ("målkoden", spec.target_system, col[ColumnRole.MAP_TARGET],
+                                                     col[ColumnRole.MAP_TARGET_DISPLAY])):
+            code = r.get(code_col)
+            if not code:
+                continue
+            res = results[(system, str(code))]
+            if not res.get("result"):
+                notes.append(f"{side} {code} finns inte i {system}")
+            elif res.get("inactive"):
+                notes.append(f"{side} {code} är inaktiv")
+            elif res.get("display") and r.get(display_col) and res["display"] != r.get(display_col):
+                display = res["display"]
+                notes.append(f"{side}s text skiljer sig från tjänstens ('{res['display']}')")
+        if notes:
+            status = "okänd" if any("finns inte" in n for n in notes) else (
+                "inaktiv" if any("inaktiv" in n for n in notes) else "text")
+            flags[str(r.get(col[ColumnRole.CODE]))] = Flag(status=status, message="; ".join(notes),
+                                                           server_display=display)
+    unmapped = []
+    if spec.source_valueset:
+        try:
+            expansion = await client.expand(url=spec.source_valueset, count=1000)
+            present = {str(r.get(col[ColumnRole.MAP_SOURCE])) for r in data[sheet].rows}
+            unmapped = [c["code"] for c in expansion["contains"] if c["code"] not in present]
+        except Exception:  # noqa: BLE001 – täckningen är en bonus
+            pass
+    project.flags = {sheet: flags} if flags else {}
+    return {"flags": len(flags), "unmapped": unmapped, "checked": len(pairs)}
+
+
+def project_from_resource(ws: Workspace, resource: dict, title: str, author: str,
+                          namespace: Namespace | None = None, classification: str | None = None) -> Project:
+    """Ta in ett förslag (eller annan resurs) från terminologitjänsten som projekt att granska och förvalta."""
+    from ..importer.external import resolve_system_name
+    from ..importer.mapping import CodeSystemMeta, SourceInfo
+    meta = CodeSystemMeta(url=resource["url"], name=resource.get("name") or resource["id"],
+                          title=resource.get("title"), version=re.sub(r"[^0-9.]", "", resource.get("version") or "")
+                          or "0.1.0", description=resource.get("description"), purpose=resource.get("purpose"),
+                          sources={"url": "förslag på terminologitjänsten"})
+    if not re.fullmatch(r"\d+\.\d+\.\d+", meta.version):
+        meta.version = "0.1.0"
+    origin = f"{resource['resourceType']}/{resource.get('id')} ({resource['url']}|{resource.get('version', '-')})"
+    if resource["resourceType"] == "ConceptMap":
+        spec = conceptmap.spec_from_conceptmap(resource)
+        spec.origin = origin
+        tpl = conceptmap.template(meta, spec)
+        rows, notes = conceptmap.rows_from_conceptmap(resource, tpl)
+        project = create_mapping_project(ws, title, meta, spec, rows, author, namespace, classification,
+                                         questions=notes + ["Taget in från ett förslag (AI-stött) – granska varje "
+                                                            "mappning innan release."], source=origin)
+        return project
+    if resource["resourceType"] != "ValueSet":
+        raise OpError(f"{resource['resourceType']} kan inte tas in som projekt ännu.")
+    includes = [i for i in resource.get("compose", {}).get("include", []) if i.get("system")]
+    if any(i.get("filter") or not i.get("concept") for i in includes):
+        raise OpError("Bara urval med uttryckligen listade koder kan tas in.")
+    systems = {i["system"]: resolve_system_name(i["system"])[0] for i in includes}
+    columns = [ColumnMapping(source_column=h, role=role, rationale="Förslag från terminologitjänsten",
+                             ui=UiHints(label=h, order=n))
+               for n, (h, role) in enumerate((("Kod", ColumnRole.CODE), ("Benämning", ColumnRole.DISPLAY),
+                                              ("Kodsystem", ColumnRole.SYSTEM)))]
+    tpl = ImportTemplate(kind="valueset", codesystem=meta, source=SourceInfo(sheet="Urval"), columns=columns,
+                         external_systems={key: system for system, key in systems.items()})
+    rows = [{"Kod": c["code"], "Benämning": c.get("display"), "Kodsystem": i["system"]}
+            for i in includes for c in i["concept"]]
+    if namespace:
+        tpl.namespace = namespace.key
+        tpl.codesystem.publisher = tpl.codesystem.publisher or namespace.publisher
+    tpl.classification = classification
+    tpl.source.file = origin
+    project = Project(id=ws.new_id(title), title=title, template=tpl, source_file=origin, questions=[
+        Question(text=f"Taget in från förslaget {origin} (AI-stött) – granska urvalet innan release.")])
+    ws.save(project, {"Urval": SheetData(headers=["Kod", "Benämning", "Kodsystem"], rows=rows)}, author=author,
+            action="Urval taget in från förslag", detail={"ursprung": origin, "rader": len(rows)})
+    return project
 
 
 async def check_subset(ws: Workspace, project: Project, data: dict[str, SheetData], client=None) -> dict:

@@ -11,8 +11,9 @@ Miljövariabler:
     TX_BASE_URL     terminologitjänstens FHIR-bas (standard https://tx.fhir.org/r4)
     TX_TOKEN        valfri bearer-token
     TX_LANGUAGE     föredraget språk för displaytexter (standard sv)
-    TX_ALLOW_WRITE  "1" aktiverar skrivverktygen (create_valueset, upsert_resource).
-                    Avstängt som standard – använd mot en lokal testserver.
+    TX_ALLOW_WRITE  "1" aktiverar förslagsverktygen (propose_valueset, propose_conceptmap,
+                    propose_translation, withdraw_proposal). Avstängt som standard – använd mot
+                    en testserver. Förslag skriver aldrig över granskat innehåll.
 
 Kör:  term-mcp           (stdio, för Claude Desktop/Code och demo-klienten)
       term-mcp --http    (streamable HTTP)
@@ -32,6 +33,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .config import ServerConfig
+from . import proposals
 from .fhir.client import TerminologyClient, TerminologyError
 
 INSTRUCTIONS = """\
@@ -41,13 +43,18 @@ Börja med list_codesystems/list_valuesets/find_codesystem för att hitta
 canonical URL:er, använd sedan lookup_code, validate_code, expand_valueset,
 search_concepts, concept_hierarchy, subsumes och translate_code. Hitta aldrig på
 koder – slå upp eller validera dem. validate_valueset kontrollerar alla koder i
-en värdemängd. Om skrivverktygen finns (create_valueset, upsert_resource) skriver
-de till tjänsten: berätta vad som skapades och med vilken canonical URL."""
+en värdemängd.
+
+Om förslagsverktygen finns (propose_valueset, propose_conceptmap,
+propose_translation) skapar de förslag på tjänsten: utkast som granskas i
+administrationsverktyget innan de släpps. Hämta koderna och deras texter med
+verktygen innan du föreslår något, motivera val som inte är självklara, och
+säg vad som skapades (canonical URL, antal koder). list_proposals visar
+ogranskade förslag."""
 
 mcp = MCPServer("term-mcp", instructions=INSTRUCTIONS)
 
 _client: TerminologyClient | None = None
-_WRITABLE = ("CodeSystem", "ValueSet", "ConceptMap")
 
 
 def tool(fn):
@@ -57,7 +64,7 @@ def tool(fn):
     async def wrapper(*args, **kwargs):
         try:
             return await fn(*args, **kwargs)
-        except (TerminologyError, ValueError) as exc:
+        except (TerminologyError, ValueError) as exc:  # ProposalError är en ValueError
             raise ToolError(str(exc)) from exc
         except httpx2.HTTPError as exc:
             raise ToolError(f"Terminologitjänsten svarar inte ({type(exc).__name__}: {exc})") from exc
@@ -135,8 +142,39 @@ async def list_conceptmaps(query: str | None = None, count: int = 20) -> list[di
 
 @tool
 async def lookup_code(system: str, code: str, version: str | None = None) -> dict:
-    """Slå upp ett begrepp: display, designations och egenskaper ($lookup)."""
-    return await client().lookup(system, code, version)
+    """Slå upp ett begrepp: display, designations och egenskaper ($lookup). Översättningar i
+    CodeSystem-supplement på tjänsten (t.ex. svenska språkpaket och förslag) tas med under `translations`."""
+    result = await client().lookup(system, code, version)
+    translations = await _supplement_translations(system, code)
+    if translations:
+        result["translations"] = translations
+    return result
+
+
+async def _supplement_translations(system: str, code: str) -> list[dict]:
+    """Alla servrar använder inte supplement i $lookup (HAPI gör det inte), så de läses direkt."""
+    try:
+        supplements = await client().search("CodeSystem", count=50, supplements=system, _summary="false")
+    except TerminologyError:
+        return []
+    out = []
+    for cs in supplements:
+        for concept in _flat_concepts(cs.get("concept", [])):
+            if concept.get("code") != code:
+                continue
+            texts = [(d.get("language") or cs.get("language"), d.get("value")) for d in concept.get("designation", [])]
+            if not texts and concept.get("display"):
+                texts = [(cs.get("language"), concept["display"])]
+            for language, value in dict.fromkeys(texts):
+                out.append({"language": language, "value": value, "source": cs.get("url"),
+                            **({"proposal": True} if proposals.is_proposal(cs) else {})})
+    return out
+
+
+def _flat_concepts(concepts: list[dict]):
+    for c in concepts:
+        yield c
+        yield from _flat_concepts(c.get("concept", []))
 
 
 @tool
@@ -238,54 +276,54 @@ async def validate_codes(tx: TerminologyClient, valueset: dict, concurrency: int
             "whole_code_systems": whole, "problems": [r for r in results if r["status"] != "ok"]}
 
 
-# -- skriva (bara med TX_ALLOW_WRITE=1) ------------------------------------------------------------
+# -- förslag (skapas bara med TX_ALLOW_WRITE=1) -------------------------------------------------------
 
-def _resource_id(name: str) -> str:
-    rid = re.sub(r"[^A-Za-z0-9\-.]+", "-", name).strip("-.")[:64] or "resurs"
-    return rid if not rid.isdigit() else f"r-{rid}"[:64]
-
-
-async def create_valueset(url: str, name: str, title: str, concepts: list[dict],
-                          description: str | None = None, version: str = "0.1.0") -> dict:
-    """Skapa (eller ersätt) ett ValueSet med uttryckligen listade koder.
-    `concepts` är en lista med {system, code, display?}. Koderna kontrolleras först med $validate-code;
-    okända koder gör att inget skapas."""
-    check = await validate_codes(client(), {"compose": {"include": [
-        {"system": c["system"], "concept": [{"code": c["code"], "display": c.get("display")}]} for c in concepts]}})
-    invalid = [p for p in check["problems"] if p["status"] in ("invalid", "error")]
-    if invalid:
-        return {"created": False, "reason": "Okända eller ogiltiga koder – inget skapades.", "problems": invalid}
-    include: dict[str, list] = {}
-    for c in concepts:
-        include.setdefault(c["system"], []).append(
-            {k: v for k, v in {"code": c["code"], "display": c.get("display")}.items() if v})
-    vs = {
-        "resourceType": "ValueSet", "id": _resource_id(name), "url": url, "version": version,
-        "name": re.sub(r"\W", "_", name), "title": title, "status": "draft", "experimental": True,
-        "description": description or f"Skapad via MCP: {title}.",
-        "compose": {"include": [{"system": s, "concept": cs} for s, cs in include.items()]},
-    }
-    stored = await client().put_resource(vs)
-    return {"created": True, "id": stored.get("id", vs["id"]), "url": url, "version": version,
-            "codes": len(concepts), "inactive": [p for p in check["problems"] if p["status"] == "inactive"]}
+@tool
+async def list_proposals() -> list[dict]:
+    """Lista förslag (urval, mappningar, översättningar) som skapats på tjänsten och ännu inte granskats."""
+    return await proposals.list_all(client())
 
 
-async def upsert_resource(resource: dict) -> dict:
-    """Skapa eller uppdatera en CodeSystem-, ValueSet- eller ConceptMap-resurs (PUT på id, annars POST)."""
-    if resource.get("resourceType") not in _WRITABLE:
-        raise ValueError(f"Bara {', '.join(_WRITABLE)} kan skrivas.")
-    if not resource.get("url"):
-        raise ValueError("Resursen saknar canonical url.")
-    if resource.get("id"):
-        resource = resource | {"id": _resource_id(resource["id"])}
-    stored = await client().put_resource(resource)
-    return {"resourceType": resource["resourceType"], "id": stored.get("id"), "url": resource["url"],
-            "version": resource.get("version")}
+async def propose_valueset(url: str, name: str, title: str, concepts: list[dict],
+                           rationale: str | None = None, version: str = "0.1.0") -> dict:
+    """Föreslå ett urval (ValueSet) med uttryckligen listade koder. `concepts`: [{system, code, display?}].
+    Koderna kontrolleras först; okända koder gör att inget skapas. Skapas som utkast märkt "förslag"
+    och granskas sedan i administrationsverktyget. Samma namn ersätter ett tidigare förslag."""
+    return await proposals.valueset(client(), url, name, title, concepts, rationale, version)
+
+
+async def propose_conceptmap(url: str, name: str, title: str, source_system: str, target_system: str,
+                             mappings: list[dict], rationale: str | None = None,
+                             source_valueset: str | None = None, target_valueset: str | None = None,
+                             version: str = "0.1.0") -> dict:
+    """Föreslå en mappning (ConceptMap) från ett kodsystem till ett annat.
+    `mappings`: [{source_code, target_code, relation, comment?}] där relation är equivalent (likvärdig),
+    wider (målet är bredare), narrower (målet är smalare – kräver comment), related (närliggande – kräver
+    comment) eller unmatched (ingen motsvarighet, utan target_code). En källkod kan ha flera mål.
+    Med `source_valueset` rapporteras vilka källkoder som saknar mappning. Alla koder kontrolleras först."""
+    return await proposals.conceptmap(client(), url, name, title, source_system, target_system, mappings,
+                                      rationale, source_valueset, target_valueset, version,
+                                      client().config.fhir_version)
+
+
+async def propose_translation(codesystem: str, language: str, translations: list[dict],
+                              url: str | None = None, name: str | None = None, title: str | None = None,
+                              rationale: str | None = None) -> dict:
+    """Föreslå en översättning av ett kodsystem som finns på tjänsten, som CodeSystem-supplement.
+    `translations`: [{code, display}] där display är texten på målspråket `language` (BCP-47, t.ex. sv).
+    Översätt utifrån kodsystemets egna displaytexter och definitioner, inte från minnet."""
+    return await proposals.translation(client(), codesystem, language, translations, url, name, title, rationale,
+                                       proposal_base=client().config.proposal_base)
+
+
+async def withdraw_proposal(resource_type: str, id: str) -> dict:
+    """Ta bort ett förslag (bara resurser märkta som förslag kan tas bort)."""
+    return await proposals.withdraw(client(), resource_type, id)
 
 
 if ServerConfig.from_env().allow_write:
-    tool(create_valueset)
-    tool(upsert_resource)
+    for _fn in (propose_valueset, propose_conceptmap, propose_translation, withdraw_proposal):
+        tool(_fn)
 
 
 def run(transport: str = "stdio") -> None:

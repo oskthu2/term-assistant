@@ -1,6 +1,6 @@
 <div class="crumbs"><a href="/">Projekt</a> › {{ project.title }}</div>
 {% set cls = settings.classification(project.template.classification) %}
-<h1>{{ project.title }} <span class="badge muted">{{ 'urval → ValueSet' if project.template.kind == 'valueset' else 'kodverk → CodeSystem' }}</span>
+<h1>{{ project.title }} <span class="badge muted">{{ KIND_LABELS[project.template.kind] }}</span>
   <span class="badge {{ 'ok' if cls.rank == 0 else ('warn' if cls.rank == 1 else 'bad') }}" title="{{ cls.description }}">{{ cls.label }}</span></h1>
 <nav class="tabs">
   <a href="/p/{{ project.id }}" class="{{ 'active' if active == 'overview' }}">Översikt</a>

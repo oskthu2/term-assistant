@@ -3,9 +3,6 @@
 import asyncio
 import io
 import json
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
 import httpx2
 import pytest
 
@@ -15,37 +12,7 @@ from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient  # noqa: E402
 
 from term_mcp.demo import Session, call_tool, connect, list_tools, server_parameters  # noqa: E402
 
-VALUESETS = {"resourceType": "Bundle", "type": "searchset", "entry": [{"resource": {
-    "resourceType": "ValueSet", "url": "http://hl7.se/fhir/ig/base/ValueSet/SEBaseMaritalStatusVS",
-    "version": "1.1.0", "name": "SEBaseMaritalStatusVS", "title": "SE ValueSet for marital status",
-    "status": "active"}}]}
-
-
-class FakeFhir(BaseHTTPRequestHandler):
-    requests: list[str] = []
-
-    def do_GET(self):  # noqa: N802
-        FakeFhir.requests.append(self.path)
-        body = json.dumps(VALUESETS if self.path.startswith("/fhir/ValueSet") else
-                          {"resourceType": "CapabilityStatement", "fhirVersion": "4.0.1",
-                           "software": {"name": "Fake"}}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/fhir+json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass
-
-
-@pytest.fixture
-def fhir():
-    server = HTTPServer(("127.0.0.1", 0), FakeFhir)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_port}/fhir"
-    server.shutdown()
-
+from .conftest import FakeFhir  # noqa: E402
 
 def _message(content, stop_reason, n):
     return {"id": f"msg_{n}", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
@@ -87,7 +54,7 @@ def test_claude_drives_mcp_tools(fhir):
     assert first["fallbacks"] == "default" and first["output_config"] == {"effort": "medium"}
     names = {t["name"] for t in first["tools"]}
     assert {"lookup_code", "expand_valueset", "translate_code"} <= names
-    assert "create_valueset" not in names                     # skrivverktygen är av som standard
+    assert "propose_conceptmap" not in names                  # förslagsverktygen är av som standard
     assert any(p.startswith("/fhir/ValueSet") for p in FakeFhir.requests)
     # Hela dialogen sparas för nästa instruktion: fråga, verktygsanrop, verktygssvar, svar.
     assert [m["role"] for m in history] == ["user", "assistant", "user", "assistant"]
@@ -95,6 +62,7 @@ def test_claude_drives_mcp_tools(fhir):
 
 def test_tools_and_direct_call_without_claude(fhir, capsys):
     names = asyncio.run(list_tools(server_parameters(fhir, allow_write=True)))
-    assert "create_valueset" in names and "upsert_resource" in names
+    assert {"propose_valueset", "propose_conceptmap", "propose_translation", "withdraw_proposal"} <= set(names)
+    assert "upsert_resource" not in names                       # inget generellt skrivverktyg
     data = asyncio.run(call_tool(server_parameters(fhir, allow_write=False), "server_info", {}))
     assert data["base_url"] == fhir and data["write_enabled"] is False

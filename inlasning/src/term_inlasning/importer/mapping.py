@@ -41,6 +41,12 @@ class ColumnRole(str, Enum):
     COMMENT = "comment"          # Kommentar/källa -> tillägget valueset-concept-comments
     # Förvaltning: status, tillagd, borttagen, ersätts av … -> fasta mål, se lifecycle.py
     LIFECYCLE = "lifecycle"
+    # Mappning (en rad = en mappning i ConceptMap), se conceptmap.py
+    MAP_SOURCE = "map_source"                  # källkod
+    MAP_SOURCE_DISPLAY = "map_source_display"  # källkodens text
+    MAP_TARGET = "map_target"                  # målkod
+    MAP_TARGET_DISPLAY = "map_target_display"  # målkodens text
+    MAP_RELATION = "map_relation"              # likvärdig, målet är bredare/smalare, närliggande, ingen motsvarighet
     IGNORE = "ignore"            # Läses inte in
 
 
@@ -78,7 +84,7 @@ class UiHints(BaseModel):
     order: int = 0
     visible: bool = True
     editable: bool = True
-    widget: Literal["text", "textarea", "select", "checkbox", "date", "number", "concept-picker"] = "text"
+    widget: Literal["text", "textarea", "select", "checkbox", "date", "number", "concept-picker", "code-search"] = "text"
     options: list[str] | None = Field(None, description="Tillåtna värden för select-widget")
     group: str | None = Field(None, description="Grupprubrik i vyn, t.ex. 'Används av'")
 
@@ -185,11 +191,23 @@ class TextCatalogue(BaseModel):
     texts: list[TextColumn]
 
 
+class MappingSpec(BaseModel):
+    """För mappningsprojekt: från vilket kodsystem till vilket."""
+
+    source_system: str
+    target_system: str
+    source_version: str | None = None
+    target_version: str | None = None
+    source_valueset: str | None = Field(None, description="Vilka källkoder som ska mappas (ConceptMap.sourceUri)")
+    target_valueset: str | None = Field(None, description="Vilka målkoder som får användas (ConceptMap.targetUri)")
+    origin: str | None = Field(None, description="Varifrån projektet kom, t.ex. ett förslag på terminologitjänsten")
+
+
 class ImportTemplate(BaseModel):
     """Inläsningsmall och tillika specifikation för administrationsvyn."""
 
     template_version: int = 3
-    kind: Literal["codesystem", "valueset"] = "codesystem"
+    kind: Literal["codesystem", "valueset", "conceptmap"] = "codesystem"
     codesystem: CodeSystemMeta
     source: SourceInfo = SourceInfo()
     columns: list[ColumnMapping]
@@ -203,6 +221,7 @@ class ImportTemplate(BaseModel):
     namespace: str | None = Field(None, description="Nyckel för vald namnrymd (URL-mönster, OID-rot)")
     classification: str | None = Field(None, description="Informationsklass, t.ex. 'öppen' eller 'intern'")
     license_note: str | None = Field(None, description="Licensvillkor som följer med paketet")
+    mapping: MappingSpec | None = Field(None, description="När kind=conceptmap")
     snomed_module: str | None = Field(None, description="SNOMED CT-utgåva (modul-id) för versioner angivna som "
                                                         "datum, t.ex. 45991000052106 (Sverige)")
 
@@ -232,6 +251,13 @@ class ImportTemplate(BaseModel):
         codes = [c for c in self.columns if c.role == ColumnRole.CODE]
         if len(codes) != 1:
             problems.append(f"Mallen måste ha exakt en kodkolumn, har {len(codes)}.")
+        if self.kind == "conceptmap":
+            if self.mapping is None or not self.mapping.source_system or not self.mapping.target_system:
+                problems.append("Mappningen saknar käll- eller målkodsystem.")
+            for role in (ColumnRole.MAP_SOURCE, ColumnRole.MAP_TARGET, ColumnRole.MAP_RELATION):
+                if sum(c.role == role for c in self.columns) != 1:
+                    problems.append(f"Mappningen behöver exakt en kolumn för {role.value}.")
+            return problems
         if sum(c.role == ColumnRole.DISPLAY for c in self.columns) > 1:
             problems.append("Mallen får ha högst en display-kolumn; övriga bör vara designations.")
         known = {p.code for p in self.properties}

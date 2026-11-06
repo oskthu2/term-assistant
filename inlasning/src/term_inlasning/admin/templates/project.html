@@ -5,7 +5,12 @@
 {% set open_q = project.questions | rejectattr('resolved') | list %}
 <div class="grid">
   <div class="panel">
-    <h3>{{ 'Urval' if tpl.kind == 'valueset' else 'Kodverk' }}</h3>
+    <h3>{{ {'valueset': 'Urval', 'conceptmap': 'Mappning'}.get(tpl.kind, 'Kodverk') }}</h3>
+    {% if tpl.kind == 'conceptmap' %}
+    <div class="small">Från <span class="mono">{{ tpl.mapping.source_system }}</span>{% if tpl.mapping.source_valueset %} (värdemängd <span class="mono">{{ tpl.mapping.source_valueset }}</span>){% endif %}<br>
+      till <span class="mono">{{ tpl.mapping.target_system }}</span>{% if tpl.mapping.target_valueset %} (värdemängd <span class="mono">{{ tpl.mapping.target_valueset }}</span>){% endif %}</div>
+    {% if tpl.mapping.origin %}<div class="small muted">Ursprung: {{ tpl.mapping.origin }}</div>{% endif %}
+    {% endif %}
     <ul class="plain">
       {% for name, d in data.items() %}
       <li><a href="/p/{{ project.id }}/s/{{ quote(name) }}">{{ name }}</a> <span class="muted small">{{ d.rows | length }} rader</span></li>
@@ -27,6 +32,11 @@
     <form method="post" action="/p/{{ project.id }}/check" class="actions">
       <button type="submit">Kontrollera urvalet</button>
       <span class="small muted">Flaggar inaktiva, okända och ersatta koder (lokala kodverk + terminologitjänsten).</span>
+    </form>
+    {% elif tpl.kind == 'conceptmap' %}
+    <form method="post" action="/p/{{ project.id }}/check" class="actions">
+      <button type="submit">Kontrollera mappningen</button>
+      <span class="small muted">Käll- och målkoder mot terminologitjänsten, och källkoder som saknar mappning.</span>
     </form>
     {% endif %}
     <div class="actions">

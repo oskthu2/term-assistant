@@ -12,11 +12,16 @@
   "postCreateCommand": "bash .devcontainer/setup.sh",
   "forwardPorts": [
     8000,
+    8001,
     8080
   ],
   "portsAttributes": {
     "8000": {
-      "label": "Inläsningstjänsten",
+      "label": "Administrationsverktyget (inläsningstjänsten)",
+      "onAutoForward": "openBrowser"
+    },
+    "8001": {
+      "label": "Terminologiassistenten (MCP-webb)",
       "onAutoForward": "openBrowser"
     },
     "8080": {

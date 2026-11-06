@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminologiassistent</title>
+<style>
+:root {
+  --bg: #f5f6f8; --panel: #ffffff; --text: #1d2330; --muted: #646d7e; --line: #dde1e8;
+  --accent: #1f5fae; --accent-weak: #e6eefa; --ok: #1d7a46; --ok-weak: #e3f4ea;
+  --warn: #8a5a00; --warn-weak: #fdf1d8; --bad: #a3262d; --bad-weak: #fbe6e7; --code: #f0f2f6;
+  --radius: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c; --panel: #1c2027; --text: #e4e7ed; --muted: #9aa3b2; --line: #2e343e;
+    --accent: #7fb0f0; --accent-weak: #1e2b3d; --ok: #6fd19a; --ok-weak: #18301f;
+    --warn: #f0c060; --warn-weak: #33290f; --bad: #f08a90; --bad-weak: #3a1c1f; --code: #232833;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 17px; margin: 0 8px 0 0; }
+.badge { display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 10px; background: var(--accent-weak); color: var(--accent); }
+.badge.ok { background: var(--ok-weak); color: var(--ok); } .badge.warn { background: var(--warn-weak); color: var(--warn); }
+.badge.bad { background: var(--bad-weak); color: var(--bad); }
+.spacer { flex: 1; }
+button, .button { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: var(--radius); padding: 7px 14px; cursor: pointer; text-decoration: none; }
+button.secondary, .button.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+label.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+#log { min-height: 50vh; display: flex; flex-direction: column; gap: 12px; }
+.msg.user { align-self: flex-end; max-width: 80%; background: var(--accent-weak); padding: 8px 12px; border-radius: var(--radius); white-space: pre-wrap; }
+.msg.assistant { max-width: 100%; }
+.msg.assistant table { border-collapse: collapse; margin: 6px 0; font-size: 14px; }
+.msg.assistant th, .msg.assistant td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.msg.assistant code, pre { background: var(--code); border-radius: 4px; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+.msg.assistant code { padding: 1px 4px; }
+pre { padding: 8px; overflow-x: auto; max-height: 320px; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+details.tool { border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 10px; font-size: 14px; }
+details.tool summary { cursor: pointer; color: var(--muted); }
+details.tool summary b { color: var(--text); font-weight: 600; }
+details.tool.error summary { color: var(--bad); }
+.status { color: var(--muted); font-size: 14px; }
+.error { color: var(--bad); }
+.note { color: var(--warn); font-size: 14px; }
+form#ask { display: flex; gap: 8px; margin-top: 14px; align-items: flex-end; }
+textarea { flex: 1; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--text); min-height: 60px; resize: vertical; }
+.examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.examples button { background: transparent; color: var(--accent); border-color: var(--line); font-size: 13px; padding: 4px 10px; text-align: left; }
+aside h2 { font-size: 15px; margin: 0 0 8px; }
+.proposal { border-top: 1px solid var(--line); padding: 8px 0; font-size: 14px; }
+.proposal:first-of-type { border-top: 0; }
+.proposal .url { color: var(--muted); font-size: 12px; word-break: break-all; }
+.proposal a { margin-right: 10px; color: var(--accent); }
+.empty { color: var(--muted); font-size: 14px; }
+.banner { margin: 12px 20px 0; padding: 10px 14px; border-radius: var(--radius); background: var(--warn-weak); color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Terminologiassistent</h1>
+  <span class="badge" id="tx">…</span>
+  <span class="spacer"></span>
+  <label class="toggle" title="Låt assistenten skapa förslag på urval, mappningar och översättningar på terminologitjänsten">
+    <input type="checkbox" id="forslag" checked> Förslag tillåtna</label>
+  <button class="secondary" id="new">Nytt samtal</button>
+</header>
+<div class="banner" id="nokey" hidden>ANTHROPIC_API_KEY saknas – assistenten kan inte svara. Lägg nyckeln som Codespaces-hemlighet och starta om.</div>
+<main>
+  <section class="panel">
+    <div id="log" aria-live="polite"></div>
+    <form id="ask">
+      <textarea id="instruktion" placeholder="Instruera assistenten, t.ex. ”Föreslå en mappning från norska civilstånd till HL7 v3” (Ctrl+Enter skickar)" aria-label="Instruktion"></textarea>
+      <button type="submit" id="send">Skicka</button>
+    </form>
+    <div class="examples" id="examples"></div>
+  </section>
+  <aside class="panel">
+    <h2>Förslag på terminologitjänsten</h2>
+    <p class="empty" style="margin-top:0">Utkast som väntar på granskning i
+      <a id="adminlink" href="#" target="_blank" rel="noopener">administrationsverktyget</a>.</p>
+    <div id="proposals"><p class="empty">Inga förslag ännu.</p></div>
+    <p><button class="secondary" id="refresh">Uppdatera</button></p>
+  </aside>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let conv = null, cfg = null, busy = false;
+const KIND = {ValueSet: "Urval", ConceptMap: "Mappning", CodeSystem: "Översättning"};
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+function pretty(text) { try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; } }
+function short(v) { const s = typeof v === "string" ? v : JSON.stringify(v); return s.length > 60 ? s.slice(0, 60) + "…" : s; }
+function scroll() { window.scrollTo({top: document.body.scrollHeight, behavior: "smooth"}); }
+
+async function start() {
+  cfg = await (await fetch("api/config")).json();
+  $("tx").textContent = cfg.tx;
+  $("adminlink").href = cfg.admin + "/tx-forslag";
+  $("nokey").hidden = cfg.apiKey;
+  if (!cfg.writeAllowed) { $("forslag").checked = false; $("forslag").disabled = true; }
+  for (const ex of cfg.examples) {
+    const b = el("button", null, ex); b.type = "button";
+    b.onclick = () => { $("instruktion").value = ex; $("instruktion").focus(); };
+    $("examples").append(b);
+  }
+  await newConversation();
+}
+
+async function newConversation() {
+  $("log").innerHTML = "";
+  const status = el("p", "status", "Startar MCP-servern …"); $("log").append(status);
+  const r = await fetch("api/samtal", {method: "POST", headers: {"Content-Type": "application/json"},
+                                      body: JSON.stringify({forslag: $("forslag").checked})});
+  const data = await r.json();
+  if (!r.ok) { status.className = "error"; status.textContent = data.error; return; }
+  conv = data.id;
+  status.textContent = `Ansluten till MCP-servern – ${data.tools.length} verktyg` +
+    (data.forslag ? ", förslag tillåtna." : ", bara läsning.");
+  loadProposals();
+}
+
+async function ask(text) {
+  if (busy || !conv) return;
+  busy = true; $("send").disabled = true;
+  $("log").append(el("div", "msg user", text));
+  const status = el("p", "status", "Arbetar …"); $("log").append(status); scroll();
+  const tools = {};
+  try {
+    const r = await fetch(`api/samtal/${conv}/fraga`, {method: "POST", headers: {"Content-Type": "application/json"},
+                                                       body: JSON.stringify({instruktion: text})});
+    if (!r.ok) { const d = await r.json(); throw new Error(d.error); }
+    const reader = r.body.getReader(), decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      let i;
+      while ((i = buffer.indexOf("\n\n")) >= 0) {
+        const line = buffer.slice(0, i); buffer = buffer.slice(i + 2);
+        if (line.startsWith("data: ")) handle(JSON.parse(line.slice(6)), status, tools);
+      }
+    }
+  } catch (e) {
+    $("log").insertBefore(el("p", "error", e.message), status);
+  }
+  status.remove(); busy = false; $("send").disabled = false; scroll();
+}
+
+function handle(ev, status, tools) {
+  const log = $("log");
+  if (ev.type === "text") {
+    const d = el("div", "msg assistant"); d.innerHTML = ev.html; log.insertBefore(d, status);
+  } else if (ev.type === "tool_use") {
+    const d = el("details", "tool");
+    const s = el("summary"); s.append("→ ", el("b", null, ev.name), "(" + Object.entries(ev.input).map(([k, v]) => `${k}=${short(v)}`).join(", ") + ")");
+    d.append(s, el("pre", null, JSON.stringify(ev.input, null, 2)));
+    tools[ev.id] = d; log.insertBefore(d, status);
+    status.textContent = `Anropar ${ev.name} …`;
+  } else if (ev.type === "tool_result") {
+    const d = tools[ev.id];
+    if (d) { d.append(el("pre", null, pretty(ev.text))); if (ev.is_error) d.classList.add("error");
+             d.querySelector("summary").append(ev.is_error ? "  ✗ fel" : "  ✓"); }
+    status.textContent = "Arbetar …";
+    if (/^propose_|^withdraw_/.test(ev.name || "")) loadProposals();
+  } else if (ev.type === "done") {
+    if (ev.note) log.insertBefore(el("p", "note", ev.note), status);
+    loadProposals();
+  } else if (ev.type === "error") {
+    log.insertBefore(el("p", "error", ev.text), status);
+  }
+  scroll();
+}
+
+async function loadProposals() {
+  if (!conv) return;
+  const r = await fetch(`api/samtal/${conv}/forslag`);
+  const list = await r.json();
+  const box = $("proposals"); box.innerHTML = "";
+  if (!r.ok) { box.append(el("p", "error", list.error || "Kunde inte hämta förslagen.")); return; }
+  if (!list.length) { box.append(el("p", "empty", "Inga förslag ännu.")); return; }
+  for (const p of list) {
+    const d = el("div", "proposal");
+    d.append(el("span", "badge", KIND[p.resourceType] || p.resourceType), " ", el("b", null, p.title || p.id));
+    d.append(el("div", "url", p.url));
+    const view = el("a", null, "Visa (JSON)"); view.href = `api/resurs/${p.resourceType}/${encodeURIComponent(p.id)}`; view.target = "_blank";
+    const review = el("a", null, "Granska"); review.href = cfg.admin + "/tx-forslag"; review.target = "_blank";
+    d.append(view, review);
+    box.append(d);
+  }
+}
+
+$("ask").onsubmit = (e) => { e.preventDefault(); const t = $("instruktion").value.trim(); if (t) { $("instruktion").value = ""; ask(t); } };
+$("instruktion").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("ask").requestSubmit(); };
+$("new").onclick = () => { if (!busy) newConversation(); };
+$("forslag").onchange = () => { if (!busy) newConversation(); };
+$("refresh").onclick = loadProposals;
+start();
+</script>
+</body>
+</html>

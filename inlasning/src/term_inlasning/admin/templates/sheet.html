@@ -7,10 +7,12 @@
 <div class="toolbar">
   <input type="search" id="filter" placeholder="Filtrera …" aria-label="Filtrera rader">
   <span class="small muted"><span id="count">{{ data.rows | length }}</span> av {{ data.rows | length }} rader</span>
-  <a class="button" href="/p/{{ project.id }}/s/{{ quote(sheet) }}/new">Nytt begrepp</a>
+  <a class="button" href="/p/{{ project.id }}/s/{{ quote(sheet) }}/new">{{ 'Ny mappning' if tpl.kind == 'conceptmap' else 'Nytt begrepp' }}</a>
+  {% if tpl.kind != 'conceptmap' %}
   <form method="post" action="/p/{{ project.id }}/s/{{ quote(sheet) }}/ai" class="inline"
         onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'AI granskar …'">
     <button type="submit" class="secondary" title="Claude föreslår rättelser; förslagen granskas innan de förs in">AI-granskning</button></form>
+  {% endif %}
   {% if flags %}<span class="badge bad">{{ flags | length }} flaggade koder</span>{% endif %}
 </div>
 <div class="tablewrap">

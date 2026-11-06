@@ -14,6 +14,7 @@ redaktionella regler) ligger i ``<arbetsyta>/settings.json``; se
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -29,7 +30,7 @@ from ..config import ServerConfig, fhir_version
 from ..importer.mapping import ColumnRole
 from ..importer.plan import ImportPlan, plan_import
 from ..importer.registry import PropertyRegistry
-from ..importer import lifecycle, metadata
+from ..importer import conceptmap, lifecycle, metadata
 from ..importer.replacements import RELATIONS
 from ..importer.suggest import MappingProposal
 from ..importer.workbook import read_workbook
@@ -61,7 +62,9 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
     reg_path = Path(registry_path) if registry_path else ws.root / "registry.json"
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]))
     env.globals.update(ROLE_LABELS=ops.ROLE_LABELS, is_retired=ops.is_retired, LIFECYCLE=lifecycle.FIELDS,
-                       META_FIELDS=metadata.FIELDS, ColumnRole=ColumnRole, quote=quote, RELATIONS=RELATIONS,
+                       META_FIELDS=metadata.FIELDS, RELATION_LABELS=conceptmap.LABELS,
+                       KIND_LABELS={"codesystem": "kodverk → CodeSystem", "valueset": "urval → ValueSet",
+                                    "conceptmap": "mappning → ConceptMap"}, ColumnRole=ColumnRole, quote=quote, RELATIONS=RELATIONS,
                        tx_url=lambda: ServerConfig.from_env().base_url, fhir_version=fhir_version,
                        publish_enabled=lambda: os.environ.get("TX_PUBLISH") == "1",
                        validator_enabled=lambda: bool(os.environ.get("FHIR_VALIDATOR_JAR")),
@@ -651,6 +654,19 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         if project is None:
             return not_found(request, "Projektet")
         use_server = (await request.form()).get("server") != "nej"
+        if project.template.kind == "conceptmap":
+            try:
+                async with tx_client() as client:
+                    result = await ops.check_mapping(project, data, client)
+            except Exception as exc:
+                return redirect(f"/p/{project.id}", f"Terminologitjänsten kunde inte nås: {exc}")
+            ws.save(project, author=author(request), action="Mappningen kontrollerad",
+                    detail={"flaggade": result["flags"], "omappade": len(result["unmapped"])})
+            msg = f"{result['checked']} koder kontrollerade, {result['flags']} rader behöver hanteras."
+            if result["unmapped"]:
+                msg += (f" {len(result['unmapped'])} källkoder saknar mappning: "
+                        + ", ".join(result["unmapped"][:8]) + (" …" if len(result["unmapped"]) > 8 else ""))
+            return redirect(sheet_url(project, conceptmap.SHEET), msg)
         try:
             if use_server:
                 async with tx_client() as client:
@@ -666,6 +682,129 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         if result["server_error"]:
             msg += f" Terminologitjänsten kunde inte nås: {result['server_error']}"
         return redirect(sheet_url(project, sheet), msg)
+
+    # -- mappningar och förslag från terminologitjänsten -----------------------------------------
+
+    PROPOSAL_TAG = "urn:term-assistant:arbetsflode|forslag"
+
+    async def mapping_new(request: Request, errors=None, form=None, status=200):
+        return render(request, "mapping_new.html", status=status, errors=errors or [], form=form or {},
+                      tx=ServerConfig.from_env().base_url)
+
+    async def mapping_create(request: Request):
+        form = dict(await request.form())
+        cfg = settings()
+        errors = []
+        title = (form.get("title") or "").strip()
+        source, target = (form.get("source") or "").strip(), (form.get("target") or "").strip()
+        if not title:
+            errors.append("Ange ett namn på mappningen.")
+        if not source or not target:
+            errors.append("Ange källa (ValueSet eller CodeSystem) och målkodsystem.")
+        ns = cfg.namespace(form.get("namespace"))
+        if errors:
+            return await mapping_new(request, errors, form, 400)
+        source_system, source_vs, codes = source, None, []
+        try:
+            async with tx_client() as client:
+                vs = await client.read_canonical("ValueSet", source)
+                if vs is not None:  # källan är en värdemängd: mappa dess koder
+                    source_vs = source
+                    expansion = await client.expand(url=source, count=2000)
+                    systems = {c.get("system") for c in expansion["contains"]}
+                    if len(systems) != 1:
+                        raise ops.OpError(f"Källvärdemängden innehåller {len(systems)} kodsystem – ett "
+                                          "mappningsprojekt har ett källkodsystem. Ange kodsystemet i stället.")
+                    source_system = systems.pop()
+                    codes = expansion["contains"]
+                elif await client.read_canonical("CodeSystem", source) is not None:
+                    implicit = {"resourceType": "ValueSet", "compose": {"include": [{"system": source}]}}
+                    codes = (await client.expand(valueset=implicit, count=2000))["contains"]
+                else:
+                    raise ops.OpError(f"{source} finns varken som ValueSet eller CodeSystem på terminologitjänsten.")
+                if await client.read_canonical("CodeSystem", target) is None:
+                    raise ops.OpError(f"Målkodsystemet {target} finns inte på terminologitjänsten.")
+        except ops.OpError as exc:
+            return await mapping_new(request, exc.messages, form, 400)
+        except Exception as exc:  # nätverk m.m.
+            return await mapping_new(request, [f"Terminologitjänsten kunde inte nås: {exc}"], form, 502)
+        from ..importer.mapping import CodeSystemMeta, MappingSpec
+        from ..importer.transform import _ascii
+        name = re.sub(r"[^A-Za-z0-9]+", "_", _ascii(title)).strip("_") or "Mappning"
+        base = (ns.base_url if ns else "http://example.org/fhir").rstrip("/")
+        meta = CodeSystemMeta(url=f"{base}/ConceptMap/{name}", name=name, title=title,
+                              description=(form.get("description") or "").strip() or None,
+                              sources={"url": "vald namnrymd"})
+        spec = MappingSpec(source_system=source_system, target_system=target, source_valueset=source_vs,
+                           target_valueset=(form.get("target_valueset") or "").strip() or None,
+                           origin="skapad i administrationsverktyget")
+        tpl = conceptmap.template(meta, spec)
+        rows = ops.source_rows(tpl, codes) if form.get("fill") else []
+        project = ops.create_mapping_project(ws, title, meta, spec, rows, author(request), namespace=ns,
+                                             classification=cfg.classification(form.get("classification")).key)
+        return redirect(sheet_url(project, conceptmap.SHEET),
+                        f"Mappningsprojektet är skapat med {len(rows)} källkoder att mappa.")
+
+    async def tx_proposals(request: Request):
+        """Förslag (urval, mappningar, översättningar) som MCP-servern skapat på terminologitjänsten."""
+        found, error = [], None
+        try:
+            async with tx_client() as client:
+                for rtype in ("ConceptMap", "ValueSet", "CodeSystem"):
+                    for r in await client.search(rtype, count=100, _tag=PROPOSAL_TAG, _summary=None):
+                        if r.get("status") == "draft":  # en släppt resurs är aldrig ett förslag
+                            found.append(r)
+        except Exception as exc:
+            error = f"Terminologitjänsten kunde inte nås: {exc}"
+        taken = {p.source_file for p in ws.projects() if p.source_file}
+        return render(request, "tx_proposals.html", proposals=found, error=error, taken=taken,
+                      tx=ServerConfig.from_env().base_url)
+
+    async def tx_proposal_take(request: Request):
+        form = await request.form()
+        rtype, rid = form.get("type") or "", form.get("id") or ""
+        cfg = settings()
+        try:
+            async with tx_client() as client:
+                resource = await client.read(rtype, rid)
+            if resource is None:
+                raise ops.OpError(f"{rtype}/{rid} finns inte längre på terminologitjänsten.")
+            title = (form.get("title") or resource.get("title") or resource.get("name") or rid).strip()
+            project = ops.project_from_resource(ws, resource, title, author(request),
+                                                namespace=cfg.namespace(form.get("namespace")),
+                                                classification=cfg.classification(form.get("classification")).key)
+        except ops.OpError as exc:
+            return redirect("/tx-forslag", "; ".join(exc.messages))
+        return redirect(f"/p/{project.id}", "Förslaget är taget in som projekt. Granska det innan release.")
+
+    async def code_search(request: Request):
+        """Sök koder i projektets käll- eller målkodsystem (för kodfälten i mappningsprojekt)."""
+        project, _ = load(request.path_params["pid"])
+        if project is None or project.template.kind != "conceptmap":
+            return JSONResponse([], status_code=404)
+        spec = project.template.mapping
+        system = spec.target_system if request.query_params.get("sida") != "kalla" else spec.source_system
+        scope = spec.target_valueset if request.query_params.get("sida") != "kalla" else spec.source_valueset
+        q = (request.query_params.get("q") or "").strip()
+        try:
+            async with tx_client() as client:
+                if scope:
+                    result = await client.expand(url=scope, filter=q or None, count=30)
+                else:
+                    implicit = {"resourceType": "ValueSet", "compose": {"include": [{"system": system}]}}
+                    result = await client.expand(valueset=implicit, filter=q or None, count=30)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        hits = [{"code": c["code"], "display": c.get("display")} for c in result["contains"]]
+        if q and not any(h["code"] == q for h in hits):  # exakt kod som inte matchar textfiltret
+            try:
+                async with tx_client() as client:
+                    exact = await client.validate_code(q, system=system)
+                if exact.get("result"):
+                    hits.insert(0, {"code": q, "display": exact.get("display")})
+            except Exception:  # noqa: BLE001 – sökningen fungerar ändå
+                pass
+        return JSONResponse(hits)
 
     async def log_page(request: Request):
         project, _ = load(request.path_params["pid"])
@@ -694,6 +833,11 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         Route("/import", import_upload, methods=["POST"]),
         Route("/import/{uid}", import_plan),
         Route("/import/{uid}/create/{i:int}", import_create, methods=["POST"]),
+        Route("/mappning/ny", mapping_new, methods=["GET"]),
+        Route("/mappning/ny", mapping_create, methods=["POST"]),
+        Route("/tx-forslag", tx_proposals, methods=["GET"]),
+        Route("/tx-forslag/ta-in", tx_proposal_take, methods=["POST"]),
+        Route("/p/{pid}/sok", code_search),
         Route("/p/{pid}", project_page),
         Route("/p/{pid}/meta", project_meta, methods=["POST"]),
         Route("/p/{pid}/oids", project_oids, methods=["POST"]),

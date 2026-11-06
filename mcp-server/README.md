@@ -27,7 +27,9 @@ term-mcp --http                                 # streamable HTTP
 | `TX_BASE_URL` | terminologitjänstens FHIR-bas |
 | `TX_TOKEN` | valfri bearer-token |
 | `TX_LANGUAGE` | språk för displaytexter (standard `sv`) |
-| `TX_ALLOW_WRITE=1` | slår på skrivverktygen. Avstängt som standard: använd det mot en testserver |
+| `TX_ALLOW_WRITE=1` | slår på förslagsverktygen. Avstängt som standard: använd det mot en testserver |
+| `TX_PROPOSAL_BASE` | bas för förslagens canonical URL:er när ingen anges (standard `http://example.org/fhir`) |
+| `FHIR_VERSION` | `R4` (standard) eller `R5`, styr ConceptMap-formatet i förslag |
 
 | Verktyg | FHIR-operation |
 |---|---|
@@ -41,13 +43,56 @@ term-mcp --http                                 # streamable HTTP
 | `subsumes` | `CodeSystem/$subsumes` |
 | `translate_code` | `ConceptMap/$translate` |
 | `validate_valueset` | `$validate-code` för varje uttryckligen listad kod i ett ValueSet |
-| `create_valueset` *(skriv)* | validerar koderna, sedan `PUT ValueSet/<id>`. Okända koder stoppar skapandet |
-| `upsert_resource` *(skriv)* | `PUT`/`POST` av CodeSystem, ValueSet eller ConceptMap |
+| `list_proposals` | sökning på förslagstaggen: ogranskade förslag |
+| `propose_valueset` *(förslag)* | urval: ValueSet med uttryckligen listade koder |
+| `propose_conceptmap` *(förslag)* | mappning: ConceptMap från ett kodsystem till ett annat, med relation per rad och täckning mot källvärdemängden |
+| `propose_translation` *(förslag)* | översättning: CodeSystem-supplement med översatt text och designation på målspråket |
+| `withdraw_proposal` *(förslag)* | ta bort ett eget förslag |
+
+`lookup_code` tar också med översättningar från supplement på tjänsten (`translations`), även
+på servrar som inte använder supplement själva (HAPI).
+
+### Förslag
+
+MCP-servern kan inte ändra granskat innehåll, bara skapa **förslag**:
+
+- **Märkning:** förslagen skapas som utkast (`status = draft`, `experimental = true`) med taggen
+  `urn:term-assistant:arbetsflode#forslag` och utgivaren "Förslag från term-mcp (AI-stött, ej granskat)".
+- **Kontroll av koder:** alla koder kontrolleras med `$validate-code` innan något skrivs. En okänd
+  kod stoppar förslaget.
+- **Motivering:** mappningar där målet är smalare, eller bara närliggande, kräver en kommentar.
+  Källkoder utan motsvarighet anges med relationen `unmatched` (R4) respektive `noMap` (R5).
+- **Granskat innehåll är skyddat:** ett förslag får aldrig ta en canonical URL eller ett id som en
+  granskad resurs redan har. Bara utkast med taggen räknas som förslag.
+- **Egna URL:er:** översättningar får URL:er i den egna namnrymden (`TX_PROPOSAL_BASE`), aldrig under
+  kodsystemets ägare.
+
+Förslagen granskas i administrationsverktyget (**Förslag från terminologitjänsten**). Där tas
+mappningar och urval in som projekt. När den granskade versionen publiceras till
+terminologitjänsten ersätter den förslaget.
 
 Fel från terminologitjänsten kommer fram till modellen som verktygsfel med
 serverns meddelande, så att den kan rätta sig, till exempel byta canonical URL.
 
 `../.mcp.json` registrerar servern i Claude Code mot tx-nordics.
+
+## Webbgränssnittet (`term-mcp-webb`)
+
+För demo: ett chattgränssnitt där du instruerar MCP-servern och ser varje steg medan det sker.
+Du ser Claudes text, verktygsanropen med argument och svar, och förslagen som skapats på
+terminologitjänsten, med länkar till resursen och till administrationsverktyget.
+
+```bash
+pip install -e '.[webb]'
+term-mcp-webb                       # http://127.0.0.1:8001
+term-mcp-webb --host 0.0.0.0        # i Codespaces – låt port 8001 vara privat
+```
+
+- Varje samtal har en egen MCP-server (underprocess) och en egen dialog, så att man kan fråga vidare.
+- Kryssrutan **Förslag tillåtna** startar om samtalet med eller utan förslagsverktygen.
+- Exempelinstruktionerna fylls i med ett klick.
+- Länken till administrationsverktyget hämtas från `TERM_ADMIN_URL`. I Codespaces räknas den fram
+  från den vidarebefordrade porten 8000.
 
 ## Demo-klienten
 
@@ -58,7 +103,7 @@ Allt går genom MCP: klienten pratar aldrig själv med terminologitjänsten.
 ```bash
 term-mcp-demo "Lista civilstånden i HL7 Sveriges värdemängd, med svensk text."
 term-mcp-demo                                  # dialog: flera instruktioner, historiken sparas
-term-mcp-demo --skriv "Skapa en värdemängd http://example.org/fhir/ValueSet/demo-civilstand med gift och ogift"
+term-mcp-demo --forslag "Föreslå en mappning från norska civilstånd till HL7 v3 MaritalStatus"
 term-mcp-demo --tx https://tx-nordics.fhir.org/fhir "Vad betyder NPU-koden NPU10599?"
 ```
 
