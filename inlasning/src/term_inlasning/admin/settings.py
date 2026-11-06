@@ -9,6 +9,10 @@
   tillåten informationsklass; ett paket i en högre klass spärras.
 * **Redaktionella regler** – om manuella ändringar ska granskas och om
   releaser kräver fyra ögon (godkännare ≠ den som skapade kandidaten).
+* **Inloggning och roller** – demo (användarval i sidhuvudet), proxy (en
+  betrodd inloggningsproxy sätter användarhuvuden) eller OIDC (verktyget
+  loggar in mot organisationens IdP). IdP-grupper/approller kopplas till
+  verktygets roller i ``auth.role_mapping``; se ``auth.py``.
 """
 
 from __future__ import annotations
@@ -74,6 +78,36 @@ class Editorial(BaseModel):
     block_rc_with_open_proposals: bool = True
 
 
+class OidcSettings(BaseModel):
+    """Inloggning mot en OpenID Connect-IdP (Entra ID, Keycloak, Ineras IdP …). Klienthemligheten läses ur
+    miljövariabeln TERM_OIDC_CLIENT_SECRET och sessionsnyckeln ur TERM_SESSION_SECRET – aldrig ur filen."""
+
+    issuer: str = Field(description="IdP:ns issuer, t.ex. https://login.microsoftonline.com/<tenant>/v2.0")
+    client_id: str
+    scopes: list[str] = ["openid", "profile", "email"]
+    roles_claim: str = Field("groups", description="Claim med grupper/roller; punktnotation för nästlade, "
+                                                   "t.ex. 'roles' (Entra approller) eller 'realm_access.roles'")
+    username_claim: str = Field("preferred_username", description="Claim som blir användarnamn (och journalens "
+                                                                  "författare)")
+    public_url: str | None = Field(None, description="Verktygets publika adress, t.ex. https://kodverk.example.se; "
+                                                     "callback blir <public_url>/auth/callback")
+
+
+class AuthSettings(BaseModel):
+    mode: Literal["demo", "proxy", "oidc"] = "demo"
+    oidc: OidcSettings | None = None
+    role_mapping: dict[str, list[str]] = Field(
+        default_factory=dict, description="IdP-grupp/approll -> roller i verktyget, t.ex. "
+                                          "{\"kodverk-granskare\": [\"läsare\", \"granskare\"]}")
+    default_roles: list[str] = Field(default_factory=list, description="Roller som alla inloggade får, t.ex. "
+                                                                       "[\"läsare\"]")
+    proxy_user_header: str = "X-Forwarded-User"
+    proxy_groups_header: str = "X-Forwarded-Groups"
+    trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"],
+                                       description="Proxyadresser (IP eller CIDR) vars användarhuvuden godtas")
+    session_minutes: int = 480
+
+
 class Settings(BaseModel):
     namespaces: list[Namespace] = [
         Namespace(key="exempel", label="Exempel (ändra i settings.json)", base_url="http://example.org/fhir",
@@ -93,6 +127,7 @@ class Settings(BaseModel):
         Target(key="tx", label="Terminologitjänsten (TX_BASE_URL)", kind="fhir-api", max_classification="intern"),
     ]
     editorial: Editorial = Editorial()
+    auth: AuthSettings = AuthSettings()
     release_required_metadata: list[str] = Field(
         default_factory=lambda: ["publisher", "description"],
         description="Metadata som måste finnas innan en releasekandidat skapas (Shareable-profilerna kräver "

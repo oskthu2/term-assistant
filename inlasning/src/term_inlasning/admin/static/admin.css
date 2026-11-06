@@ -63,3 +63,10 @@ ul.plain { list-style: none; padding: 0; margin: 0; } ul.plain li { padding: 4px
 pre { background: var(--bg); border: 1px solid var(--line); padding: 10px; border-radius: var(--radius); overflow: auto; font-size: 12px; }
 .diff-add { color: var(--ok); } .diff-del { color: var(--bad); } .diff-chg { color: var(--warn); }
 button:disabled, button[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* rolltilldelning: kryssrutor på en rad */
+form.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 0; }
+form.checks label { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-weight: normal; }
+form.checks input[type=checkbox] { width: auto; margin: 0; }
+form.checks input[name=username] { width: 14em; }
+header .roles .badge { margin-left: 2px; }

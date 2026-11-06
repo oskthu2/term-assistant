@@ -1,0 +1,13 @@
+# Mockad inloggningstjänst (Keycloak) för att prova administrationsverktygets OIDC-läge lokalt.
+# Bara för test: demolösenord, http och start-dev. Använd aldrig den här konfigurationen i drift.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.2
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8180:8180"
+    volumes:
+      - ./realm-term.json:/opt/keycloak/data/import/realm-term.json:ro

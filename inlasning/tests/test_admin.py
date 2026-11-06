@@ -355,7 +355,13 @@ def test_stale_proposal_is_not_applied(family_project):
 # -- webbappen ------------------------------------------------------------------------------------
 
 
-def test_web_flow_family(tmp_path):
+def _as(client, user: str) -> None:
+    """Demoläget: användarvalet i sidhuvudet är en cookie. Användarhuvuden godtas inte i demoläge."""
+    client.cookies.set("dev_user", user)
+
+
+def test_web_flow_family(tmp_path, monkeypatch):
+    monkeypatch.setenv("TERM_DEV_USERS", "anna,bertil")
     root = tmp_path / "ws"
     Workspace(root)
     _settings().save(root)
@@ -365,14 +371,15 @@ def test_web_flow_family(tmp_path):
                     data={"namespace": "ex", "classification": "intern"})
     assert r.status_code == 200 and "Skapa projekt" in r.text and "familj KV_EX" in r.text
     uid = r.url.path.rsplit("/", 1)[1]
-    anna, bertil = {"X-Remote-User": "anna"}, {"X-Remote-User": "bertil"}
     # Metadata hämtad ur filen visas med källa; det som saknas fylls i före inläsning.
     assert "fliken &#39;Inledning&#39; (Dokumentägare)" in r.text and "före release" in r.text
-    r = client.post(f"/import/{uid}/create/0", data={"title": "KV EX", "meta_version": "ett"}, headers=anna)
+    _as(client, "anna")
+    r = client.post(f"/import/{uid}/create/0", data={"title": "KV EX", "meta_version": "ett"})
     assert r.status_code == 400 and "X.Y.Z" in r.text
+    _as(client, "anna")
     r = client.post(f"/import/{uid}/create/0", data={
         "title": "KV EX", "meta_version": "1.1", "meta_description": "Kodverk för underlag i intyg.",
-        "meta_contact": "Kodverksförvaltningen <kodverk@example.org>"}, headers=anna)
+        "meta_contact": "Kodverksförvaltningen <kodverk@example.org>"})
     pid = r.url.path.rsplit("/", 1)[1]
     assert "Öppna frågor" in r.text and "Intern" in r.text
 
@@ -380,18 +387,23 @@ def test_web_flow_family(tmp_path):
     assert "Används av" in r.text and "KV_EX_0001.ANNAT.RBK" in r.text and "AI-granskning" in r.text
     form = _form(client.get(f"/p/{pid}/s/KV_EX_0001/c/ANNAT").text)
     form["c1"] = "Annat underlag"
-    r = client.post(f"/p/{pid}/s/KV_EX_0001/c/ANNAT", data=form, headers=anna)
+    _as(client, "anna")
+    r = client.post(f"/p/{pid}/s/KV_EX_0001/c/ANNAT", data=form)
     assert _msg(r.text) == "Sparat." and "Annat underlag" in r.text
 
+    _as(client, "anna")
     r = client.post(f"/p/{pid}/s/KV_EX_0001/c/TELEFON/retire",
-                    data={"replaced_by": "UNDERSOKNING", "relation": "wider", "comment": ""}, headers=anna)
+                    data={"replaced_by": "UNDERSOKNING", "relation": "wider", "comment": ""})
     assert "ersätts av UNDERSOKNING" in _msg(r.text)
 
-    r = client.post(f"/p/{pid}/releases", data={"version": "1.1.0", "notes": "Första"}, headers=anna)
+    _as(client, "anna")
+    r = client.post(f"/p/{pid}/releases", data={"version": "1.1.0", "notes": "Första"})
     assert r.url.path.endswith("/releases/1.1.0-rc.1"), r.text[:3000]
-    r = client.post(f"/p/{pid}/releases/1.1.0-rc.1/approve", headers=anna)
+    _as(client, "anna")
+    r = client.post(f"/p/{pid}/releases/1.1.0-rc.1/approve")
     assert "Fyra ögon" in _msg(r.text)
-    r = client.post(f"/p/{pid}/releases/1.1.0-rc.1/approve", headers=bertil)
+    _as(client, "bertil")
+    r = client.post(f"/p/{pid}/releases/1.1.0-rc.1/approve")
     assert "Release 1.1.0 är godkänd." in r.text and "Ladda ner paket" in r.text
     r = client.get(f"/p/{pid}/releases/1.1.0/package.tgz")
     pkg = read_package(r.content)
@@ -404,7 +416,8 @@ def test_web_flow_family(tmp_path):
     assert "settings.json" in client.get("/settings").text
 
 
-def test_web_review_mode_creates_proposals(tmp_path):
+def test_web_review_mode_creates_proposals(tmp_path, monkeypatch):
+    monkeypatch.setenv("TERM_DEV_USERS", "anna,bertil")
     root = tmp_path / "ws"
     Workspace(root)
     _settings(review_manual_edits=True).save(root)
@@ -415,13 +428,16 @@ def test_web_review_mode_creates_proposals(tmp_path):
     pid = client.post(f"/import/{uid}/create/0", data={"title": "KV"}).url.path.rsplit("/", 1)[1]
     form = _form(client.get(f"/p/{pid}/s/KV_EX_0001/c/ANNAT").text)
     form["c1"] = "Annat underlag"
-    r = client.post(f"/p/{pid}/s/KV_EX_0001/c/ANNAT", data=form, headers={"X-Remote-User": "anna"})
+    _as(client, "anna")
+    r = client.post(f"/p/{pid}/s/KV_EX_0001/c/ANNAT", data=form)
     assert "skickat för granskning" in _msg(r.text) and "Annat underlag" not in r.text
     page = client.get(f"/p/{pid}/proposals").text
     pid_prop = re.search(r"/proposals/([0-9a-f]+)/accept", page).group(1)
-    r = client.post(f"/p/{pid}/proposals/{pid_prop}/accept", headers={"X-Remote-User": "anna"})
+    _as(client, "anna")
+    r = client.post(f"/p/{pid}/proposals/{pid_prop}/accept")
     assert "den som skrev" in _msg(r.text)
-    r = client.post(f"/p/{pid}/proposals/{pid_prop}/accept", headers={"X-Remote-User": "bertil"})
+    _as(client, "bertil")
+    r = client.post(f"/p/{pid}/proposals/{pid_prop}/accept")
     assert "godkänd" in _msg(r.text)
     assert "Annat underlag" in client.get(f"/p/{pid}/s/KV_EX_0001").text
 
@@ -450,13 +466,13 @@ def test_releases_page_with_conceptmap_in_working_copy(tmp_path):
 def test_dev_user_switch(tmp_path, monkeypatch):
     monkeypatch.setenv("TERM_DEV_USERS", "anna,bertil")
     client = TestClient(create_app(tmp_path / "ws"), follow_redirects=True)
-    assert "testläge" in client.get("/").text
+    assert "demoläge" in client.get("/").text
     client.post("/dev/user", data={"user": "bertil"})
     assert '<option selected>bertil</option>' in client.get("/").text
     client.post("/dev/user", data={"user": "mallory"})  # inte i listan: ignoreras
     assert '<option selected>bertil</option>' in client.get("/").text
     monkeypatch.delenv("TERM_DEV_USERS")
-    assert "testläge" not in client.get("/").text and "okänd" in client.get("/").text
+    assert "demoläge" not in client.get("/").text and "okänd" in client.get("/").text
 
 
 def test_choose_targets_before_import_and_registry_learns(tmp_path):

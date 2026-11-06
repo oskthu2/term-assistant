@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Användare och roller{% endblock %}
+{% block content %}
+<h1>Användare och roller</h1>
+<p class="muted">Inloggningsläge: <strong>{{ auth_mode }}</strong>. Rollerna är additiva – en användare får
+  rollerna från sina grupper i inloggningstjänsten (<code>auth.role_mapping</code> i inställningarna),
+  standardrollerna och de roller som tilldelas här. Varje ändring loggas.</p>
+{% for w in warnings %}<div class="msg">{{ w }}</div>{% endfor %}
+
+<h2>Roller</h2>
+<table>
+  <tr><th>Roll</th><th>Får</th><th>Grupper som ger rollen</th></tr>
+  {% for r, text in ROLES.items() %}
+  <tr><td><span class="badge">{{ r }}</span></td><td>{{ text }}</td>
+    <td class="mono">{% for g, rs in mapping.items() if r in rs %}{{ g }}{{ ', ' if not loop.last }}{% endfor %}
+      {% if r in default_roles %}<em>alla inloggade</em>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Användare</h2>
+<table>
+  <tr><th>Användare</th><th>Från inloggningstjänsten</th><th>Tilldelade här</th><th></th></tr>
+  {% for row in rows %}
+  <tr>
+    <td><span class="mono">{{ row.username }}</span>{% if row.name %}<br>{{ row.name }}{% endif %}
+      {% if row.email %}<br><span class="muted">{{ row.email }}</span>{% endif %}
+      {% if row.last_seen %}<br><span class="muted">senast {{ row.last_seen }}</span>{% endif %}</td>
+    <td>{% for r in row.from_idp %}<span class="badge">{{ r }}</span> {% endfor %}
+      {% if row.groups %}<br><span class="muted mono">{{ row.groups|join(', ') }}</span>{% endif %}</td>
+    <td colspan="2">
+      <form method="post" action="/anvandare" class="checks">
+        <input type="hidden" name="username" value="{{ row.username }}">
+        {% for r in ROLES %}<label><input type="checkbox" name="r_{{ r }}" {{ 'checked' if r in row.local }}> {{ r }}</label> {% endfor %}
+        <button>Spara</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="muted">Ingen har loggat in ännu.</td></tr>
+  {% endfor %}
+</table>
+
+<h3>Tilldela roller till en ny användare</h3>
+<p class="muted">Användarnamnet ska vara samma som inloggningstjänsten skickar
+  ({% if auth_mode == 'oidc' %}claim <code>{{ username_claim or 'preferred_username' }}</code>{% else %}användarhuvudet{% endif %}).</p>
+<form method="post" action="/anvandare" class="checks">
+  <input name="username" placeholder="användarnamn" style="width:auto">
+  {% for r in ROLES %}<label><input type="checkbox" name="r_{{ r }}"> {{ r }}</label> {% endfor %}
+  <button>Spara</button>
+</form>
+
+<h2>Logg</h2>
+<table>
+  <tr><th>Tid</th><th>Av</th><th>Användare</th><th>Före</th><th>Efter</th></tr>
+  {% for e in log %}
+  <tr><td>{{ e['tid'] }}</td><td>{{ e['av'] }}</td><td>{{ e['användare'] }}</td>
+    <td>{{ e['före']|join(', ') }}</td><td>{{ e['efter']|join(', ') }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Inga ändringar.</td></tr>{% endfor %}
+</table>
+{% endblock %}

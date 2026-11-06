@@ -10,16 +10,20 @@
 <header class="top">
   <a class="brand" href="/">Kodverksadministration</a>
   <a href="/">Projekt</a>
-  <a href="/import">Ny inläsning</a>
-  <a href="/settings">Inställningar</a>
+  {% if can('redaktör') %}<a href="/import">Ny inläsning</a>{% endif %}
+  {% if can('administratör') %}<a href="/settings">Inställningar</a><a href="/anvandare">Användare och roller</a>{% endif %}
   <span class="user">FHIR {{ fhir_version() }} · <span class="mono">{{ tx_url() }}</span> ·
-    {% if dev_users() %}
-    <form method="post" action="/dev/user" class="inline" title="Testläge (TERM_DEV_USERS) – i drift sköts inloggning av en proxy">
+    {% if auth_mode == 'demo' and dev_users() %}
+    <form method="post" action="/dev/user" class="inline" title="Demoläge (TERM_DEV_USERS) – i drift loggar man in via organisationens IdP">
       <select name="user" onchange="this.form.submit()" style="width:auto;padding:2px 6px">
         {% if user not in dev_users() %}<option selected>{{ user }}</option>{% endif %}
         {% for u in dev_users() %}<option {{ 'selected' if u == user }}>{{ u }}</option>{% endfor %}
-      </select> <span class="badge warn">testläge</span></form>
-    {% else %}{{ user }}{% endif %}</span>
+      </select> <span class="badge warn">demoläge</span></form>
+    {% elif ident.authenticated %}<span title="{{ ident.email or '' }}">{{ ident.name or user }}</span>
+      {% if auth_mode == 'oidc' %}· <a href="/auth/logout">Logga ut</a>{% endif %}
+    {% else %}inte inloggad{% if auth_mode == 'oidc' %} · <a href="/auth/login">Logga in</a>{% endif %}{% endif %}
+    {% if ident.authenticated %}<span class="roles" title="Dina roller">{% for r in ROLES if can(r) %} <span class="badge">{{ r }}</span>{% endfor %}</span>{% endif %}
+  </span>
 </header>
 <main>
   {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}

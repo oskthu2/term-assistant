@@ -41,8 +41,8 @@ Designen beskrivs i [docs/arkitektur.md](docs/arkitektur.md).
    term-paket bygg paketbyggare/paket/npu.json --ut paketbyggare/dist && mock-tx/starta.sh   # valfritt: hela NPU
    ```
 
-4. Starta de två webbgränssnitten i varsin terminal och låt portarna vara **privata**, eftersom
-   verktygen saknar egen inloggning:
+4. Starta de två webbgränssnitten i varsin terminal och låt portarna vara **privata**. I
+   Codespaces körs administrationsverktyget i demoläge, med användarval i stället för inloggning:
 
    ```bash
    term-mcp-webb --host 0.0.0.0                                                       # port 8001
@@ -80,6 +80,16 @@ Designen beskrivs i [docs/arkitektur.md](docs/arkitektur.md).
    term-paket bygg paketbyggare/paket/egna-kodverk.json --ut paketbyggare/dist && mock-tx/starta.sh
    ```
 
+## Inloggning och roller i drift
+
+Administrationsverktyget loggar in mot organisationens IdP med OpenID Connect (Entra ID,
+Keycloak, Ineras IdP) eller bakom en inloggningsproxy. Behörigheten styrs av fem roller
+(läsare, redaktör, granskare, publicerare, administratör). Rollerna ges enklast genom grupper
+eller app roles i IdP:n, och kan kompletteras under **Användare och roller** i verktyget. Med
+`TERM_PRODUCTION=1` vägrar verktyget att starta i demoläge eller med en osäker konfiguration.
+Se [inlasning/README.md](inlasning/README.md#inloggning-och-behörighet) och prova lokalt med
+[mock-idp](mock-idp/README.md) (Keycloak).
+
 ## Utveckla
 
 Varje komponent är ett eget Python-paket med egna tester:
@@ -97,5 +107,6 @@ inlasning/       inläsningstjänsten: importer/, admin/ (webbapp), examples/, t
 mcp-server/      MCP-servern och demo-klienten
 paketbyggare/    paketbyggaren, paketbeskrivningar (paket/) och mall för distributionsrepo (mall-repo/)
 mock-tx/         HAPI FHIR i Docker + startskript för grundladdning
+mock-idp/        Keycloak i Docker för att prova inloggning och roller
 docs/            arkitektur och designbeslut
 ```

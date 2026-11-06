@@ -1,2 +1,2 @@
 {% extends "base.html" %}
-{% block content %}<h1>Hittades inte</h1><p>{{ message }}</p><p><a href="/">Till startsidan</a></p>{% endblock %}
+{% block content %}<h1>{{ title or "Hittades inte" }}</h1><p>{{ message }}</p><p><a href="/">{{ "Logga in igen" if title == "Utloggad" and auth_mode == "oidc" else "Till startsidan" }}</a></p>{% endblock %}

@@ -456,7 +456,31 @@ Releaseflödet är: arbetskopia → `X.Y.Z-rc.N` (draft, diff mot senaste
 release, policykontroll) → godkänd release `X.Y.Z` (active) → valfri
 publicering som paket till en inläsningskatalog eller med `PUT` till en
 terminologitjänst (det senare kräver `TX_PUBLISH=1`). Allt loggas med
-användarnamnet från `X-Remote-User`.
+den inloggade användarens namn.
+
+### Inloggning och behörighet (`admin/auth.py`)
+
+Verktyget har tre lägen: `demo` (användarval, ingen inloggning), `oidc` (OpenID Connect
+direkt mot organisationens IdP) och `proxy` (en inloggningsproxy skickar användare och
+grupper i huvuden). Besluten:
+
+* **Roller i stället för användarlistor.** Fem additiva roller: läsare, redaktör, granskare,
+  publicerare, administratör. Varje rutt kräver en roll och kontrolleras på servern. Fyra
+  ögon-regeln i den redaktionella kedjan ligger kvar ovanpå rollerna.
+* **IdP:n äger vem som är vem, verktyget äger vad rollerna betyder.** Grupper eller app roles
+  från IdP:n översätts till roller med `auth.role_mapping`. Behörighet ges alltså i
+  organisationens katalog och försvinner när någon slutar. Lokal tilldelning (med logg) finns
+  för undantag och för organisationer som inte kan skapa grupper snabbt.
+* **Inget litar på klienten.** Användarhuvuden godtas bara i proxyläget och bara från betrodda
+  adresser (helst med en delad hemlighet). Tidigare godtogs `X-Remote-User` från vem som helst.
+  ID-token valideras fullt ut (signatur via JWKS, `iss`, `aud`, `exp`, `nonce`), sessionen är en
+  signerad cookie, formulär från andra webbplatser avvisas.
+* **Fel konfiguration stoppar starten.** Med `TERM_PRODUCTION=1` vägras demoläget, http-issuer,
+  kort sessionsnyckel och proxy som litar på alla adresser.
+
+MCP-servern och `term-mcp-webb` har ingen egen inloggning. I drift ska skrivande MCP
+(`TX_ALLOW_WRITE=1`) bara nå en test- eller förslagsmiljö, och webbgränssnittet ska ligga
+bakom samma inloggningsproxy eller vara privat.
 
 ## Värdemängdsdefinitioner
 
@@ -607,8 +631,9 @@ förslag (manuellt eller AI) → granskning (annan person) → införande → re
 * **Export till Excel** av arbetskopian för den som behöver granska i kalkylark.
 * **Samtidig redigering**: arbetsytan är gjord för en eller ett fåtal
   redaktörer; vid fler behövs låsning eller en databas.
-* **Autentisering** mot Inera (OAuth2/SITHS) och skrivbehörighet för
-  publicering.
+* **SITHS och behörighet per projekt**: inloggning med SITHS-kort via Ineras IdP fungerar
+  redan som OIDC; nästa steg är roller per projekt eller förvaltningsgrupp i stället för
+  globalt.
 * **ConceptMap-stöd vid inläsning**: kolumner som innehåller koder från andra
   kodsystem kan valideras mot tjänsten (`validate_code`) och föreslås bli
   ConceptMap i stället för egenskaper.

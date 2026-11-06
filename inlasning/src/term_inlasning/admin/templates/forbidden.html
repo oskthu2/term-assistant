@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Ingen behörighet{% endblock %}
+{% block content %}
+{% if reason == 'inloggning' %}
+<h1>Inloggning krävs</h1>
+<p>Du är inte inloggad. Verktyget kräver inloggning via organisationens inloggningstjänst.</p>
+{% else %}
+<h1>Ingen behörighet</h1>
+<p>Det här kräver rollen <strong>{{ needed }}</strong> – {{ ROLES[needed] }}.</p>
+<p>Du är inloggad som <span class="mono">{{ user }}</span>
+  {% if ident.roles %}med rollerna {% for r in ROLES if can(r) %}<span class="badge">{{ r }}</span> {% endfor %}{% else %}utan roller{% endif %}.
+  {% if ident.groups %}Grupper från inloggningstjänsten: <span class="mono">{{ ident.groups|join(', ') }}</span>.{% endif %}</p>
+<p>Be en administratör om rollen, antingen genom att lägga dig i rätt grupp i organisationens
+  katalog eller genom att tilldela den under <em>Användare och roller</em>.</p>
+{% endif %}
+<p><a href="/">Till startsidan</a></p>
+{% endblock %}

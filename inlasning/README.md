@@ -52,8 +52,8 @@ term-inlasning admin --workspace ./arbetsyta
    både i lokalt förvaltade kodverk och i terminologitjänsten (`$validate-code`, `$lookup`,
    `$translate`). Förslag på ersättare byts in med ett klick.
 
-Vyn har ingen egen inloggning. Kör den bakom en proxy som skickar `X-Remote-User`.
 Projekten lagras som JSON i arbetsytan och går att versionshantera med git.
+Inloggning och roller beskrivs i [Inloggning och behörighet](#inloggning-och-behörighet).
 
 **Inställningar** (`<arbetsyta>/settings.json`, visas under *Inställningar*):
 
@@ -80,6 +80,89 @@ Projekten lagras som JSON i arbetsytan och går att versionshantera med git.
 | `TX_PUBLISH=1` | slår på publicering via FHIR-API (paketmål kräver det inte) |
 | `FHIR_VALIDATOR_JAR` | sökväg till HL7:s `validator_cli.jar`; används då vid "Validera paketet" och `term-inlasning validate-package` |
 | `ANTHROPIC_API_KEY` | för AI-granskning (eller `ant auth login`) |
+
+### Inloggning och behörighet
+
+Verktyget har tre lägen (`auth.mode` i `settings.json`):
+
+| Läge | Inloggning | Används till |
+|---|---|---|
+| `demo` (standard) | användarval i sidhuvudet (`TERM_DEV_USERS="anna,bertil"`), ingen riktig inloggning | demo, test, Codespaces med privata portar |
+| `oidc` | OpenID Connect direkt mot organisationens IdP (Entra ID, Keycloak, Ineras IdP …) | drift |
+| `proxy` | en inloggningsproxy framför verktyget (oauth2-proxy, Apache mod_auth_openidc, en API-gateway) skickar användare och grupper i huvuden | drift när det redan finns en sådan proxy |
+
+**Roller.** Behörigheten styrs av fem roller som läggs ihop:
+
+| Roll | Får |
+|---|---|
+| `läsare` | se projekt, releaser, förslag och logg, ladda ner paket |
+| `redaktör` | läsa in, skapa och ändra projekt, skapa releasekandidater, ta in förslag från terminologitjänsten |
+| `granskare` | godkänna eller avslå ändringsförslag och releasekandidater. Fyra ögon gäller fortfarande: man kan inte godkänna sitt eget |
+| `publicerare` | publicera godkända releaser |
+| `administratör` | inställningar och rolltilldelning |
+
+En användare får rollerna från tre källor:
+
+1. **Grupper i IdP:n** via `auth.role_mapping`. Det är det enkla sättet i drift: lägg användaren
+   i rätt grupp i katalogen, så följer behörigheten med, och den försvinner när personen slutar.
+2. **Lokal tilldelning** under **Användare och roller** (kräver `administratör`). Där syns alla
+   som loggat in, med grupper och de roller grupperna ger. Varje ändring loggas i
+   `<arbetsyta>/behorighet.log.jsonl`; tilldelningarna sparas i `<arbetsyta>/roller.json`.
+3. **`auth.default_roles`**, roller som alla inloggade får, till exempel `["läsare"]`.
+
+I demoläget har en användare utan lokal tilldelning alla roller, så att demon fungerar
+direkt. Tilldela en roll lokalt (t.ex. bara `läsare` till cecilia) för att visa hur
+behörigheten begränsar.
+
+**Exempel: OIDC mot Keycloak** (grupper i claim `groups`):
+
+```json
+"auth": {
+  "mode": "oidc",
+  "oidc": {"issuer": "https://login.example.org/realms/vard", "client_id": "term-admin",
+           "roles_claim": "groups", "public_url": "https://kodverk.example.org"},
+  "role_mapping": {"kodverk-lasare": ["läsare"],
+                   "kodverk-redaktorer": ["läsare", "redaktör"],
+                   "kodverk-granskare": ["läsare", "granskare"],
+                   "kodverk-publicerare": ["läsare", "publicerare"],
+                   "kodverk-administratorer": ["läsare", "administratör"]}
+}
+```
+
+**Entra ID:** använd *app roles* i appregistreringen i stället för grupper (`"roles_claim":
+"roles"`, issuer `https://login.microsoftonline.com/<tenant>/v2.0`). Då slipper man att
+gruppclaimet ersätts med en länk när användaren är med i många grupper, och rollerna tilldelas
+under *Enterprise applications → Users and groups*. `role_mapping` blir då till exempel
+`{"Kodverk.Redaktor": ["läsare", "redaktör"]}`. `roles_claim` tar punktnotation, t.ex.
+`realm_access.roles` för Keycloaks realmroller.
+
+Hemligheter läses bara från miljövariabler, aldrig från `settings.json`:
+
+| Variabel | Betydelse |
+|---|---|
+| `TERM_SESSION_SECRET` | signeringsnyckel för sessionscookien, minst 32 tecken (`python -c 'import secrets; print(secrets.token_urlsafe(48))'`) |
+| `TERM_OIDC_CLIENT_SECRET` | klienthemligheten (utelämnas för en publik klient med PKCE) |
+| `TERM_PROXY_SECRET` | delad hemlighet som proxyn skickar i `X-Proxy-Secret` |
+| `TERM_PRODUCTION=1` | drift: demoläget och http-adresser vägras, verktyget startar inte med en osäker konfiguration |
+
+**Säkerhet i drift:**
+
+- Inloggningen följer OIDC authorization code-flödet med PKCE, `state` och `nonce`. ID-tokenet
+  valideras mot IdP:ns nycklar (JWKS) med kontroll av signatur, utgivare, mottagare och
+  giltighetstid. Bara asymmetriska algoritmer godtas, aldrig `none` eller HS256.
+- Sessionen ligger i en signerad cookie (`HttpOnly`, `SameSite=Lax`, `Secure` med https) och
+  gäller i `auth.session_minutes` (standard 480). Rollerna räknas om vid varje begäran, så en
+  ändrad tilldelning gäller direkt. En ändrad gruppmedlemskap i IdP:n gäller vid nästa inloggning.
+- Behörigheten kontrolleras på servern för varje rutt. Att knappar döljs i vyn är bara bekvämlighet.
+- Formulär som skickas från en annan webbplats avvisas (Origin/Referer-kontroll). Sidorna får
+  inte bäddas in i andra sidor (`X-Frame-Options`, `frame-ancestors`).
+- I proxyläget godtas användarhuvudet bara från adresserna i `auth.trusted_proxies` (standard
+  bara localhost) och, om `TERM_PROXY_SECRET` är satt, bara med rätt hemlighet. Verktyget ska
+  då bara nås via proxyn. I demo- och OIDC-läget ignoreras sådana huvuden helt.
+- Administratören kan inte ta bort sin egen lokala administratörsroll.
+- Kör alltid bakom https i drift (TLS i proxyn eller lastbalanseraren) och sätt `public_url`.
+
+**Prova lokalt** med en mockad IdP (Keycloak), se [`../mock-idp`](../mock-idp/README.md).
 
 ### Mappningar (ConceptMap)
 

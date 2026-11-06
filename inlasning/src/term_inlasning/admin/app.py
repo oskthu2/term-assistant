@@ -13,14 +13,18 @@ redaktionella regler) ligger i ``<arbetsyta>/settings.json``; se
 
 from __future__ import annotations
 
+import hmac
 import json
 import re
+import time
 import os
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -34,7 +38,7 @@ from ..importer import conceptmap, lifecycle, metadata, supplement
 from ..importer.replacements import RELATIONS
 from ..importer.suggest import MappingProposal
 from ..importer.workbook import read_workbook
-from . import editorial, ops
+from . import auth, editorial, ops
 from .settings import Settings
 from .store import Workspace
 
@@ -47,18 +51,57 @@ def dev_users() -> list[str]:
 
 
 def author(request: Request) -> str:
-    user = request.headers.get("x-remote-user") or request.headers.get("x-forwarded-user")
-    if user:
-        return user
-    cookie = request.cookies.get("dev_user")
-    return cookie if cookie and cookie in dev_users() else "okänd"
+    """Den inloggade användaren (sätts av inloggningen i create_app). Användarhuvuden godtas bara i
+    proxyläge och bara från en betrodd proxy – se auth.py."""
+    ident = getattr(request.state, "identity", None)
+    return ident.username if ident is not None and ident.username else "okänd"
+
+
+class SecurityMiddleware:
+    """Säkerhetshuvuden och skydd mot förfalskade formulär (CSRF): en POST med ett Origin eller Referer
+    från en annan webbplats avvisas. Sessionscookien är dessutom SameSite=Lax."""
+
+    def __init__(self, app, allowed_origin: str | None = None):
+        self.app = app
+        self.allowed_origin = allowed_origin.rstrip("/") if allowed_origin else None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        if scope["method"] not in ("GET", "HEAD", "OPTIONS"):
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+            origin = headers.get("origin") or headers.get("referer")
+            if origin and origin != "null":
+                from urllib.parse import urlsplit
+                parts = urlsplit(origin)
+                got = f"{parts.scheme}://{parts.netloc}"
+                own = {f"{scope.get('scheme', 'http')}://{headers.get('host', '')}"}
+                if self.allowed_origin:
+                    own.add(self.allowed_origin)
+                if got not in own:
+                    response = HTMLResponse("Begäran kom från en annan webbplats och avvisades.", status_code=403)
+                    return await response(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                extra = [(b"x-content-type-options", b"nosniff"), (b"x-frame-options", b"DENY"),
+                         (b"referrer-policy", b"same-origin"),
+                         (b"content-security-policy", b"frame-ancestors 'none'")]
+                message["headers"] = list(message.get("headers", [])) + extra
+            await send(message)
+        await self.app(scope, receive, send_with_headers)
 
 
 def create_app(workspace: str | Path, registry_path: str | Path | None = None,
-               base_url: str = "http://example.org/fhir", tx_client_factory=None, ai_client_factory=None
-               ) -> Starlette:
-    """``tx_client_factory``/``ai_client_factory`` gör det möjligt att byta klienter i test."""
+               base_url: str = "http://example.org/fhir", tx_client_factory=None, ai_client_factory=None,
+               oidc_transport=None) -> Starlette:
+    """``tx_client_factory``/``ai_client_factory``/``oidc_transport`` gör det möjligt att byta klienter i test."""
     ws = Workspace(workspace)
+    auth_cfg = Settings.load(ws.root).auth  # inloggningsläget gäller tills verktyget startas om
+    auth_warnings = auth.check_config(auth_cfg)
+    roles_store = auth.RoleStore(ws.root)
+    oidc_client = auth.OidcClient(auth_cfg.oidc, os.environ.get("TERM_OIDC_CLIENT_SECRET"), oidc_transport) \
+        if auth_cfg.mode == "oidc" else None
     reg_path = Path(registry_path) if registry_path else ws.root / "registry.json"
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]))
     env.globals.update(ROLE_LABELS=ops.ROLE_LABELS, is_retired=ops.is_retired, LIFECYCLE=lifecycle.FIELDS,
@@ -69,7 +112,9 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
                        tx_url=lambda: ServerConfig.from_env().base_url, fhir_version=fhir_version,
                        publish_enabled=lambda: os.environ.get("TX_PUBLISH") == "1",
                        validator_enabled=lambda: bool(os.environ.get("FHIR_VALIDATOR_JAR")),
-                       code_count=lambda r: len(ops.resource_codes(r)), dev_users=dev_users)
+                       code_count=lambda r: len(ops.resource_codes(r)),
+                       dev_users=lambda: dev_users() if auth_cfg.mode == "demo" else [], auth_mode=auth_cfg.mode,
+                       ROLES=auth.ROLES)
 
     def settings() -> Settings:
         return Settings.load(ws.root)
@@ -94,8 +139,139 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
             ctx.setdefault("open_proposals", sum(p.status == "öppen" for p in ws.proposals(ctx["project"].id)))
         ctx.setdefault("errors", [])
         ctx.setdefault("settings", settings())
-        return HTMLResponse(env.get_template(name).render(request=request, user=author(request), **ctx),
-                            status_code=status)
+        ident = identity(request)
+        return HTMLResponse(env.get_template(name).render(request=request, user=author(request), ident=ident,
+                                                          can=ident.has, **ctx), status_code=status)
+
+    # -- inloggning och behörighet -----------------------------------------------------------
+
+    def identity(request: Request) -> auth.Identity:
+        cached = getattr(request.state, "identity", None)
+        if cached is not None:
+            return cached
+        current = settings().auth  # rolltilldelningar läses om vid varje begäran
+        ident = auth.ANONYMOUS
+        if auth_cfg.mode == "demo":
+            cookie = request.cookies.get("dev_user")
+            name = cookie if cookie and cookie in dev_users() else "okänd"
+            ident = auth.Identity(username=name, roles=auth.resolve_roles(current, roles_store, name, [], demo=True))
+        elif auth_cfg.mode == "proxy":
+            found = auth.proxy_identity(request.headers, request.client.host if request.client else None, auth_cfg)
+            if found is not None:
+                found.roles = auth.resolve_roles(current, roles_store, found.username, found.groups)
+                roles_store.seen(found)
+                ident = found
+        else:
+            user = request.session.get("user")
+            fresh = time.time() - request.session.get("login_at", 0) < auth_cfg.session_minutes * 60
+            if user and fresh:
+                ident = auth.Identity(username=user["username"], name=user.get("name"), email=user.get("email"),
+                                      groups=user.get("groups", []), source="oidc",
+                                      roles=auth.resolve_roles(current, roles_store, user["username"],
+                                                               user.get("groups", [])))
+        request.state.identity = ident
+        return ident
+
+    def need(role: str, endpoint):
+        """Rutt som kräver en roll. Kontrollen görs på servern – knappar som döljs i vyn är bara bekvämlighet."""
+        async def guarded(request: Request):
+            ident = identity(request)
+            if not ident.authenticated:
+                if auth_cfg.mode == "oidc":
+                    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+                    return RedirectResponse(f"/auth/login?{urlencode({'next': target})}", status_code=303)
+                return render(request, "forbidden.html", status=401, needed=role, reason="inloggning")
+            if not ident.has(role):
+                return render(request, "forbidden.html", status=403, needed=role, reason="roll")
+            return await endpoint(request)
+        return guarded
+
+    def public_base(request: Request) -> str:
+        if auth_cfg.oidc and auth_cfg.oidc.public_url:
+            return auth_cfg.oidc.public_url.rstrip("/")
+        return str(request.base_url).rstrip("/")
+
+    async def login(request: Request):
+        if oidc_client is None:
+            return RedirectResponse("/", status_code=303)
+        next_url = request.query_params.get("next") or "/"
+        if not next_url.startswith("/") or next_url.startswith("//"):  # ingen öppen omdirigering
+            next_url = "/"
+        try:
+            url, pending = await oidc_client.authorization_url(public_base(request) + "/auth/callback")
+        except Exception as exc:  # IdP:n nås inte
+            return render(request, "error.html", status=502, message=f"Inloggningstjänsten kunde inte nås ({exc}).")
+        request.session["pending"] = pending | {"next": next_url}
+        return RedirectResponse(url, status_code=303)
+
+    async def callback(request: Request):
+        if oidc_client is None:
+            return RedirectResponse("/", status_code=303)
+        pending = request.session.pop("pending", None)
+        params = request.query_params
+        if not pending:
+            return render(request, "error.html", status=400, message="Inloggningen har gått ut – försök igen.")
+        if params.get("error"):
+            return render(request, "error.html", status=401,
+                          message=f"Inloggningen avbröts ({params.get('error')}).")
+        if not hmac.compare_digest(params.get("state", ""), pending["state"]) or \
+                time.time() - pending["started"] > 600:
+            return render(request, "error.html", status=400, message="Inloggningen kunde inte verifieras (state).")
+        try:
+            tokens = await oidc_client.exchange(params.get("code", ""), pending)
+            claims = await oidc_client.validate(tokens["id_token"], pending["nonce"])
+        except auth.AuthError as exc:
+            return render(request, "error.html", status=401, message=str(exc))
+        user = auth.identity_from_claims(claims, auth_cfg.oidc, settings().auth)
+        request.session.clear()  # ny session vid inloggning
+        request.session.update(user=user, login_at=int(time.time()), id_token=tokens["id_token"])
+        roles_store.seen(auth.Identity(username=user["username"], name=user.get("name"), email=user.get("email"),
+                                       groups=user["groups"], source="oidc"))
+        return RedirectResponse(pending.get("next") or "/", status_code=303)
+
+    async def logout(request: Request):
+        id_token = request.session.get("id_token") if auth_cfg.mode == "oidc" else None
+        if auth_cfg.mode == "oidc":
+            request.session.clear()
+        if oidc_client is not None:
+            try:
+                url = await oidc_client.logout_url(id_token, public_base(request) + "/auth/utloggad")
+            except Exception:  # noqa: BLE001 – lokal utloggning räcker
+                url = None
+            if url:
+                return RedirectResponse(url, status_code=303)
+        return RedirectResponse("/auth/utloggad", status_code=303)
+
+    async def logged_out(request: Request):
+        return render(request, "error.html", title="Utloggad", message="Du är utloggad.")
+
+    async def users_page(request: Request, errors=None, status=200):
+        data = roles_store.all()
+        current = settings().auth
+        names = sorted(set(data["seen"]) | set(data["users"]) | set(dev_users() if auth_cfg.mode == "demo" else []))
+        rows = []
+        for name in names:
+            seen = data["seen"].get(name, {})
+            from_idp = sorted({r for g in seen.get("groups", []) for r in current.role_mapping.get(g, [])}
+                              | set(current.default_roles))
+            rows.append({"username": name, "name": seen.get("name"), "email": seen.get("email"),
+                         "groups": seen.get("groups", []), "last_seen": seen.get("last_seen"),
+                         "local": data["users"].get(name, []), "from_idp": from_idp})
+        return render(request, "users.html", status=status, rows=rows, mapping=current.role_mapping,
+                      default_roles=current.default_roles, log=roles_store.log(), errors=errors or [],
+                      warnings=auth_warnings, username_claim=auth_cfg.oidc.username_claim if auth_cfg.oidc else None)
+
+    async def users_save(request: Request):
+        form = await request.form()
+        username = (form.get("username") or "").strip()
+        if not username:
+            return await users_page(request, ["Ange användarnamnet."], 400)
+        roles = {r for r in auth.ROLES if form.get(f"r_{r}")}
+        me = author(request)
+        if username == me and "administratör" in roles_store.assigned(me) and "administratör" not in roles:
+            return await users_page(request, ["Du kan inte ta bort din egen administratörsroll."], 400)
+        roles_store.assign(username, roles, by=me)
+        return redirect("/anvandare", f"Rollerna för {username} är sparade.")
 
     def redirect(url: str, msg: str | None = None) -> RedirectResponse:
         return RedirectResponse(url + (f"?{urlencode({'msg': msg})}" if msg else ""), status_code=303)
@@ -898,7 +1074,7 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         user = form.get("user") or ""
         back = request.headers.get("referer") or "/"
         response = RedirectResponse(back, status_code=303)
-        if user in dev_users():
+        if auth_cfg.mode == "demo" and user in dev_users():
             response.set_cookie("dev_user", user, httponly=True, samesite="lax")
         return response
 
@@ -906,58 +1082,76 @@ def create_app(workspace: str | Path, registry_path: str | Path | None = None,
         return JSONResponse({"status": "ok", "projects": len(ws.projects()), "fhirVersion": fhir_version()})
 
     routes = [
-        Route("/", index),
+        Route("/", need("läsare", index)),
         Route("/health", health),
         Route("/dev/user", dev_user, methods=["POST"]),
-        Route("/settings", settings_page),
-        Route("/import", import_form, methods=["GET"]),
-        Route("/import", import_upload, methods=["POST"]),
-        Route("/import/{uid}", import_plan),
-        Route("/import/{uid}/create/{i:int}", import_create, methods=["POST"]),
-        Route("/mappning/ny", mapping_new, methods=["GET"]),
-        Route("/mappning/ny", mapping_create, methods=["POST"]),
-        Route("/oversattning/ny", translation_new, methods=["GET"]),
-        Route("/oversattning/ny", translation_create, methods=["POST"]),
-        Route("/p/{pid}/hamta-koder", fetch_new_codes, methods=["POST"]),
-        Route("/tx-forslag", tx_proposals, methods=["GET"]),
-        Route("/tx-forslag/ta-in", tx_proposal_take, methods=["POST"]),
-        Route("/p/{pid}/sok", code_search),
-        Route("/p/{pid}", project_page),
-        Route("/p/{pid}/meta", project_meta, methods=["POST"]),
-        Route("/p/{pid}/oids", project_oids, methods=["POST"]),
-        Route("/p/{pid}/questions/{i:int}", toggle_question, methods=["POST"]),
-        Route("/p/{pid}/proposals", proposals_page),
-        Route("/p/{pid}/proposals/{id}/{decision:str}", proposal_review, methods=["POST"]),
-        Route("/p/{pid}/columns", columns_page, methods=["GET"]),
-        Route("/p/{pid}/columns/new", column_add, methods=["POST"]),
-        Route("/p/{pid}/columns/{i:int}", column_save, methods=["POST"]),
-        Route("/p/{pid}/releases", releases_page, methods=["GET"]),
-        Route("/p/{pid}/releases", release_create, methods=["POST"]),
-        Route("/p/{pid}/releases/{version}", release_page),
-        Route("/p/{pid}/releases/{version}/approve", release_approve, methods=["POST"]),
-        Route("/p/{pid}/releases/{version}/publish", release_publish, methods=["POST"]),
-        Route("/p/{pid}/releases/{version}/bundle.json", release_bundle),
-        Route("/p/{pid}/releases/{version}/validate", release_hl7, methods=["POST"]),
-        Route("/p/{pid}/releases/{version}/package.tgz", release_tgz),
-        Route("/p/{pid}/preview.json", preview_bundle),
-        Route("/p/{pid}/template.json", template_json),
-        Route("/p/{pid}/check", check_page, methods=["POST"]),
-        Route("/p/{pid}/log", log_page),
-        Route("/p/{pid}/s/{sheet}", sheet_page),
-        Route("/p/{pid}/s/{sheet}/ai", ai_review, methods=["POST"]),
-        Route("/p/{pid}/s/{sheet}/new", concept_form, methods=["GET"]),
-        Route("/p/{pid}/s/{sheet}/new", concept_save, methods=["POST"]),
-        Route("/p/{pid}/s/{sheet}/c/{code}", concept_form, methods=["GET"]),
-        Route("/p/{pid}/s/{sheet}/c/{code}", concept_save, methods=["POST"]),
-        Route("/p/{pid}/s/{sheet}/c/{code}/retire", concept_retire, methods=["POST"]),
-        Route("/p/{pid}/s/{sheet}/c/{code}/delete", concept_delete, methods=["POST"]),
-        Route("/p/{pid}/s/{sheet}/c/{code}/replace", concept_replace, methods=["POST"]),
+        Route("/auth/login", login),
+        Route("/auth/callback", callback),
+        Route("/auth/logout", logout),
+        Route("/auth/utloggad", logged_out),
+        Route("/anvandare", need("administratör", users_page), methods=["GET"]),
+        Route("/anvandare", need("administratör", users_save), methods=["POST"]),
+        Route("/settings", need("administratör", settings_page)),
+        Route("/import", need("redaktör", import_form), methods=["GET"]),
+        Route("/import", need("redaktör", import_upload), methods=["POST"]),
+        Route("/import/{uid}", need("redaktör", import_plan)),
+        Route("/import/{uid}/create/{i:int}", need("redaktör", import_create), methods=["POST"]),
+        Route("/mappning/ny", need("redaktör", mapping_new), methods=["GET"]),
+        Route("/mappning/ny", need("redaktör", mapping_create), methods=["POST"]),
+        Route("/oversattning/ny", need("redaktör", translation_new), methods=["GET"]),
+        Route("/oversattning/ny", need("redaktör", translation_create), methods=["POST"]),
+        Route("/p/{pid}/hamta-koder", need("redaktör", fetch_new_codes), methods=["POST"]),
+        Route("/tx-forslag", need("läsare", tx_proposals), methods=["GET"]),
+        Route("/tx-forslag/ta-in", need("redaktör", tx_proposal_take), methods=["POST"]),
+        Route("/p/{pid}/sok", need("läsare", code_search)),
+        Route("/p/{pid}", need("läsare", project_page)),
+        Route("/p/{pid}/meta", need("redaktör", project_meta), methods=["POST"]),
+        Route("/p/{pid}/oids", need("redaktör", project_oids), methods=["POST"]),
+        Route("/p/{pid}/questions/{i:int}", need("redaktör", toggle_question), methods=["POST"]),
+        Route("/p/{pid}/proposals", need("läsare", proposals_page)),
+        Route("/p/{pid}/proposals/{id}/{decision:str}", need("granskare", proposal_review), methods=["POST"]),
+        Route("/p/{pid}/columns", need("läsare", columns_page), methods=["GET"]),
+        Route("/p/{pid}/columns/new", need("redaktör", column_add), methods=["POST"]),
+        Route("/p/{pid}/columns/{i:int}", need("redaktör", column_save), methods=["POST"]),
+        Route("/p/{pid}/releases", need("läsare", releases_page), methods=["GET"]),
+        Route("/p/{pid}/releases", need("redaktör", release_create), methods=["POST"]),
+        Route("/p/{pid}/releases/{version}", need("läsare", release_page)),
+        Route("/p/{pid}/releases/{version}/approve", need("granskare", release_approve), methods=["POST"]),
+        Route("/p/{pid}/releases/{version}/publish", need("publicerare", release_publish), methods=["POST"]),
+        Route("/p/{pid}/releases/{version}/bundle.json", need("läsare", release_bundle)),
+        Route("/p/{pid}/releases/{version}/validate", need("redaktör", release_hl7), methods=["POST"]),
+        Route("/p/{pid}/releases/{version}/package.tgz", need("läsare", release_tgz)),
+        Route("/p/{pid}/preview.json", need("läsare", preview_bundle)),
+        Route("/p/{pid}/template.json", need("läsare", template_json)),
+        Route("/p/{pid}/check", need("redaktör", check_page), methods=["POST"]),
+        Route("/p/{pid}/log", need("läsare", log_page)),
+        Route("/p/{pid}/s/{sheet}", need("läsare", sheet_page)),
+        Route("/p/{pid}/s/{sheet}/ai", need("redaktör", ai_review), methods=["POST"]),
+        Route("/p/{pid}/s/{sheet}/new", need("läsare", concept_form), methods=["GET"]),
+        Route("/p/{pid}/s/{sheet}/new", need("redaktör", concept_save), methods=["POST"]),
+        Route("/p/{pid}/s/{sheet}/c/{code}", need("läsare", concept_form), methods=["GET"]),
+        Route("/p/{pid}/s/{sheet}/c/{code}", need("redaktör", concept_save), methods=["POST"]),
+        Route("/p/{pid}/s/{sheet}/c/{code}/retire", need("redaktör", concept_retire), methods=["POST"]),
+        Route("/p/{pid}/s/{sheet}/c/{code}/delete", need("redaktör", concept_delete), methods=["POST"]),
+        Route("/p/{pid}/s/{sheet}/c/{code}/replace", need("redaktör", concept_replace), methods=["POST"]),
         Mount("/static", StaticFiles(directory=HERE / "static"), name="static"),
     ]
-    return Starlette(routes=routes)
+    middleware = [Middleware(SecurityMiddleware, allowed_origin=auth_cfg.oidc.public_url
+                             if auth_cfg.oidc and auth_cfg.oidc.public_url else None)]
+    if auth_cfg.mode == "oidc":
+        public = auth_cfg.oidc.public_url or ""
+        middleware.append(Middleware(SessionMiddleware, secret_key=os.environ["TERM_SESSION_SECRET"],
+                                     session_cookie="term_session", max_age=auth_cfg.session_minutes * 60,
+                                     same_site="lax", https_only=public.startswith("https://")))
+    return Starlette(routes=routes, middleware=middleware)
 
 
 def run(workspace: str, host: str = "127.0.0.1", port: int = 8000, base_url: str = "http://example.org/fhir",
         registry_path: str | None = None) -> None:
     import uvicorn
-    uvicorn.run(create_app(workspace, registry_path, base_url), host=host, port=port)
+    app = create_app(workspace, registry_path, base_url)
+    mode = Settings.load(Path(workspace)).auth.mode
+    print(f"Inloggningsläge: {mode}")
+    for warning in auth.check_config(Settings.load(Path(workspace)).auth):
+        print(f"VARNING: {warning}")
+    uvicorn.run(app, host=host, port=port, proxy_headers=False)  # klientadressen ska vara proxyns egen

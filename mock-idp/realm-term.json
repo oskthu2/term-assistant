@@ -1,0 +1,162 @@
+{
+  "realm": "term",
+  "enabled": true,
+  "displayName": "Terminologi (demo)",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "editUsernameAllowed": false,
+  "groups": [
+    {
+      "name": "kodverk-lasare",
+      "path": "/kodverk-lasare"
+    },
+    {
+      "name": "kodverk-redaktorer",
+      "path": "/kodverk-redaktorer"
+    },
+    {
+      "name": "kodverk-granskare",
+      "path": "/kodverk-granskare"
+    },
+    {
+      "name": "kodverk-publicerare",
+      "path": "/kodverk-publicerare"
+    },
+    {
+      "name": "kodverk-administratorer",
+      "path": "/kodverk-administratorer"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "term-admin",
+      "name": "Kodverksadministration",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "demo-klienthemlighet-byt-i-drift",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8000/auth/callback",
+        "http://127.0.0.1:8000/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:8000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8000/*##http://127.0.0.1:8000/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "anna",
+      "enabled": true,
+      "firstName": "Anna",
+      "lastName": "Redaktör",
+      "email": "anna@example.org",
+      "emailVerified": true,
+      "groups": [
+        "/kodverk-redaktorer"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "bertil",
+      "enabled": true,
+      "firstName": "Bertil",
+      "lastName": "Granskare",
+      "email": "bertil@example.org",
+      "emailVerified": true,
+      "groups": [
+        "/kodverk-granskare"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "cecilia",
+      "enabled": true,
+      "firstName": "Cecilia",
+      "lastName": "Läsare",
+      "email": "cecilia@example.org",
+      "emailVerified": true,
+      "groups": [
+        "/kodverk-lasare"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "petra",
+      "enabled": true,
+      "firstName": "Petra",
+      "lastName": "Publicerare",
+      "email": "petra@example.org",
+      "emailVerified": true,
+      "groups": [
+        "/kodverk-publicerare",
+        "/kodverk-granskare"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "ada",
+      "enabled": true,
+      "firstName": "Ada",
+      "lastName": "Administratör",
+      "email": "ada@example.org",
+      "emailVerified": true,
+      "groups": [
+        "/kodverk-administratorer"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "auth": {
+    "mode": "oidc",
+    "oidc": {
+      "issuer": "http://localhost:8180/realms/term",
+      "client_id": "term-admin",
+      "roles_claim": "groups",
+      "username_claim": "preferred_username",
+      "public_url": "http://localhost:8000"
+    },
+    "role_mapping": {
+      "kodverk-lasare": [
+        "läsare"
+      ],
+      "kodverk-redaktorer": [
+        "läsare",
+        "redaktör"
+      ],
+      "kodverk-granskare": [
+        "läsare",
+        "granskare"
+      ],
+      "kodverk-publicerare": [
+        "läsare",
+        "publicerare"
+      ],
+      "kodverk-administratorer": [
+        "läsare",
+        "administratör"
+      ]
+    },
+    "default_roles": []
+  }
+}
