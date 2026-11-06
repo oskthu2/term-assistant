@@ -3,7 +3,8 @@
 {% block content %}
 {% set active = 'proposals' %}{% include "_project_tabs.html" %}
 <p>Den redaktionella kedjan: förslag (manuella{% if not settings.editorial.review_manual_edits %} – när granskning är påslagen{% endif %} och från AI)
-granskas av en annan person innan de förs in. Godkända förslag följer med i releasens paket som Provenance.</p>
+granskas av en annan person innan de förs in – även AI-förslag: den som startade AI:n kan avvisa men inte
+godkänna dem. Godkända förslag följer med i releasens paket som Provenance.</p>
 {% if not proposals %}<div class="panel muted">Inga förslag.</div>{% endif %}
 <table>
   <tr><th>Status</th><th>Begrepp</th><th>Ändring</th><th>Motivering</th><th>Av</th><th>Granskning</th></tr>
@@ -18,12 +19,20 @@ granskas av en annan person innan de förs in. Godkända förslag följer med i 
     <td class="small">{{ p.rationale }}</td>
     <td class="small">{% if p.origin == 'ai' %}<span class="badge">AI</span> {{ p.provenance.model if p.provenance }}<br>startad av {{ p.author }}{% else %}{{ p.author }}{% endif %}<br><span class="muted">{{ p.created[:16].replace('T', ' ') }}</span></td>
     <td class="small">
-      {% if p.status == 'öppen' %}
+      {% if p.status == 'öppen' and p.author == user %}
+      <span class="muted">Fyra ögon: {{ 'du startade AI:n' if p.origin == 'ai' else 'ditt förslag' }} – en annan
+        granskare godkänner.</span>
+      {% if p.origin == 'ai' and can('granskare') %}
+      <form method="post" action="/p/{{ project.id }}/proposals/{{ p.id }}/reject" class="inline">
+        <button type="submit" class="secondary">Avvisa</button></form>{% endif %}
+      {% elif p.status == 'öppen' %}
+      {% if can('granskare') %}
       <form method="post" action="/p/{{ project.id }}/proposals/{{ p.id }}/accept" class="inline">
         <input type="text" name="comment" placeholder="Kommentar" style="max-width:160px">
         <button type="submit">Godkänn</button></form>
       <form method="post" action="/p/{{ project.id }}/proposals/{{ p.id }}/reject" class="inline">
         <button type="submit" class="secondary">Avvisa</button></form>
+      {% else %}<span class="muted">Granskas av en granskare.</span>{% endif %}
       {% else %}{{ p.reviewer }} {{ (p.reviewed or '')[:16].replace('T', ' ') }}{% if p.review_comment %}<br><span class="muted">{{ p.review_comment }}</span>{% endif %}{% endif %}
     </td>
   </tr>

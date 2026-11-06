@@ -42,7 +42,7 @@ term-inlasning admin --workspace ./arbetsyta
    valfritt med en ersättande kod och relation. Det ger egenskapen `replacedBy` och en
    ConceptMap (`<namn>_ERSATTNINGAR`) i releasen.
 6. **Redaktionell kedja**: ändringar kan gå som förslag som en annan person granskar.
-   AI-granskning (Claude) föreslår rättelser som alltid granskas och sparas med proveniens.
+   AI-granskning (Claude) föreslår rättelser som alltid granskas av en annan person än den som startade den (fyra ögon) och sparas med proveniens.
 7. **Releaser**: en releasekandidat (`X.Y.Z-rc.N`) byggs till FHIR. Den profilvalideras och
    kontrolleras mot namnrymden (URL-mönster, OID) och mot reglerna, där borttag av släppta koder
    spärras om policyn kräver det. Den jämförs också med senaste release. Godkännandet kräver
@@ -211,7 +211,8 @@ arbeta med projektet, till exempel:
 
 Assistenten slår upp, söker (även med ECL i SNOMED CT) och validerar mot terminologitjänsten
 genom MCP-servern. Varje steg visas medan det sker. Ändringarna läggs som **förslag** under
-*Förslag* och granskas där innan något ändras. Nya målkoder kontrolleras mot
+*Förslag* och granskas där innan något ändras. Fyra ögon gäller: förslagen godkänns av en annan
+granskare än den som startade assistenten. Den som startade den kan bara avvisa dem. Nya målkoder kontrolleras mot
 terminologitjänsten innan ett förslag sparas, och mappningsreglerna gäller som vid manuell
 redigering.
 

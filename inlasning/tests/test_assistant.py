@@ -119,8 +119,15 @@ def test_assistant_proposes_checked_changes_for_review(setup):
     assert prov["tools"] == {"project_rows": 1, "search_concepts": 1, "propose_changes": 1}
     assert prov["verified"] == [{"system": V3, "code": "M", "version": None, "display": "Married"}]
     assert next(r for r in ws.data(pid)["Mappningar"].rows if r["Nr"] == "M1").get("Målkod") is None
+    page = client.get(f"/p/{pid}/proposals").text
+    assert "du startade AI:n" in page and f"/proposals/{proposal.id}/accept" not in page
+    r = client.post(f"/p/{pid}/proposals/{proposal.id}/accept")              # anna startade AI:n
+    assert "startade AI:n" in _msg(r.text)
+    client.cookies.set("dev_user", "bertil")
+    assert f"/proposals/{proposal.id}/accept" in client.get(f"/p/{pid}/proposals").text
     r = client.post(f"/p/{pid}/proposals/{proposal.id}/accept")
     assert "godkänd" in _msg(r.text)
+    client.cookies.set("dev_user", "anna")
     row = next(r for r in Workspace(root).data(pid)["Mappningar"].rows if r["Nr"] == "M1")
     assert (row["Målkod"], row["Måltext"], row["Relation"]) == ("M", "Married", "likvärdig")
 

@@ -328,8 +328,10 @@ def test_editorial_chain_manual_and_ai(family_project):
     assert calls[0]["model"] == "claude-opus-5-5" and calls[0]["output_format"] is editorial.AiSuggestions
     assert [(m.code, m.changes) for m in made] == [("JOURNAL", {"Klartext": "Journaluppgift"}), ("ANNAT", {})]
     assert made[0].origin == "ai" and made[0].provenance["input_sha256"]
-    # AI-förslaget godkänns av en människa; samma person som startade granskningen får göra det.
-    editorial.review(ws, project, data, made[0].id, "anna", True, settings=cfg)
+    # Fyra ögon även för AI-förslag: den som startade AI-granskningen får avvisa men inte godkänna.
+    with pytest.raises(ops.OpError, match="annan person än den som startade AI:n"):
+        editorial.review(ws, project, data, made[0].id, "anna", True, settings=cfg)
+    editorial.review(ws, project, data, made[0].id, "bertil", True, settings=cfg)
     editorial.review(ws, project, data, made[1].id, "anna", False, "Ingen dubblett", cfg)
     data = ws.data(project.id)
     assert ops.find_row(data["KV_EX_0001"], project.template, "JOURNAL")["Klartext"] == "Journaluppgift"
@@ -432,7 +434,9 @@ def test_web_review_mode_creates_proposals(tmp_path, monkeypatch):
     r = client.post(f"/p/{pid}/s/KV_EX_0001/c/ANNAT", data=form)
     assert "skickat för granskning" in _msg(r.text) and "Annat underlag" not in r.text
     page = client.get(f"/p/{pid}/proposals").text
-    pid_prop = re.search(r"/proposals/([0-9a-f]+)/accept", page).group(1)
+    assert "ditt förslag" in page and "/accept" not in page                 # ingen godkänn-knapp för författaren
+    _as(client, "bertil")
+    pid_prop = re.search(r"/proposals/([0-9a-f]+)/accept", client.get(f"/p/{pid}/proposals").text).group(1)
     _as(client, "anna")
     r = client.post(f"/p/{pid}/proposals/{pid_prop}/accept")
     assert "den som skrev" in _msg(r.text)

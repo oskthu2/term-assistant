@@ -4,8 +4,10 @@ Varje ändring kan gå som ett *förslag* som en annan person granskar:
 
 * **AI-förslag** går alltid den vägen. Claude läser ett blad och föreslår
   rättelser (stavning, saknade definitioner, synonymer, översättningar,
-  misstänkta dubbletter). Varje förslag sparas med proveniens: modell,
-  tidpunkt, ett kontrollvärde för underlaget och motivering.
+  misstänkta dubbletter), eller arbetar på instruktion i AI-assistenten.
+  Varje förslag sparas med proveniens: modell, tidpunkt, underlag och
+  motivering. Fyra ögon gäller: den som startade AI:n får avvisa men inte
+  godkänna dess förslag.
 * **Manuella ändringar** går samma väg om arbetsytans inställning
   ``editorial.review_manual_edits`` är på. Annars införs de direkt och loggas.
 
@@ -100,8 +102,15 @@ def review(ws: Workspace, project: Project, data: dict[str, SheetData], proposal
         raise ops.OpError(f"Förslaget är redan {proposal.status}.")
     if reviewer in ("", "okänd"):
         raise ops.OpError("Granskning kräver inloggning: granskarens namn saknas.")
-    if proposal.origin == "manuell" and reviewer == proposal.author:
-        raise ops.OpError("Ett förslag kan inte granskas av den som skrev det.")
+    if reviewer == proposal.author:
+        # Fyra ögon för alla förslag: den som skrev ett förslag – eller startade AI:n som gjorde det – får inte
+        # godkänna det. Den som startade AI:n får däremot avvisa dess förslag (då förs ingenting in).
+        if proposal.origin == "ai" and not accept:
+            pass
+        elif proposal.origin == "ai":
+            raise ops.OpError("Fyra ögon: ett AI-förslag godkänns av en annan person än den som startade AI:n.")
+        else:
+            raise ops.OpError("Ett förslag kan inte granskas av den som skrev det.")
 
     proposal.reviewer, proposal.reviewed, proposal.review_comment = reviewer, now(), comment.strip()
     if not accept:

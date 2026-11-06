@@ -167,7 +167,8 @@ får redaktören instruera Claude, till exempel "föreslå mål för de rader so
   modell, tidpunkt, instruktionen och dess kontrollsumma, terminologitjänsten och MCP-serverns
   uppgifter (`server_info`: SNOMED CT-edition, programvara), de verktyg som anropades och den
   kodsystemversion varje ny målkod kontrollerades mot. En människa granskar den under
-  *Förslag*, och ett godkänt förslag förs in bara om raden inte har ändrats under tiden.
+  *Förslag* av en annan person än den som startade assistenten (fyra ögon), och ett
+  godkänt förslag förs in bara om raden inte har ändrats under tiden.
 * **Kontroll oberoende av modellen.** Innan ett förslag sparas kontrollerar
   administrationsverktyget att kolumnen är redigerbar och att raden finns. Nya målkoder
   valideras mot terminologitjänsten (`$validate-code`) och måltexten fylls i därifrån. Raden
@@ -683,6 +684,10 @@ förslag (manuellt eller AI) → granskning (annan person) → införande → re
 
 * AI-förslag går alltid via granskning. De sparas med modell, tidpunkt,
   kontrollsumma för underlaget, förbrukning och motivering.
+* Fyra ögon gäller alla förslag. Den som skrev ett förslag, eller startade AI:n
+  som gjorde det, får inte godkänna det. Den som startade AI:n får däremot avvisa
+  dess förslag, eftersom inget förs in då. Godkänn-knappen visas inte för ens
+  egna förslag, och regeln kontrolleras även på servern.
 * Manuella ändringar går via granskning om `review_manual_edits` är på.
   Annars införs de direkt och loggas.
 * Ett förslag förs bara in om raden fortfarande har värdena förslaget utgick
